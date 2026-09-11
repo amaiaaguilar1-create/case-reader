@@ -10,4 +10,7 @@ voices-v1.0.bin
 localspeech.db
 cache/
 
+# Sidecar junk from a tool handed the ":memory:" SQLite DSN as a file path
+:memory:*
+
 .DS_Store

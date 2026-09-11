@@ -17,19 +17,44 @@ Needs Python 3.10+ (onnxruntime has no 3.9 wheels; macOS still ships 3.9).
 `brew install python@3.12`, or point setup at a specific interpreter with
 `PYTHON=/path/to/python3.12 ./run.sh`.
 
-## Run it on the web (GitHub Codespaces)
+## Run it on the web (free)
 
 The app needs a real Python process and ~340MB of model on disk, so it can't
-go on a static host like GitHub Pages. Codespaces runs it as-is:
+go on a static host like GitHub Pages. GitHub Codespaces gives you a free
+computer in the cloud that runs it as-is. Nothing to install.
 
-On the repo, click **Code -> Codespaces -> Create codespace on main**. The
-devcontainer pins Python 3.12 and runs `scripts/setup.sh`, then serving with
+**1. Start the computer.** On the repo page, click the green **Code** button
+-> **Codespaces** tab -> **Create codespace on main**. A code editor opens in
+your browser. The first build takes about 5-10 minutes because it downloads
+the voice model; later starts take under a minute.
+
+**2. Start the app.** When the build finishes, type this in the terminal
+panel at the bottom and press Enter:
 
     ./run.sh
 
-forwards port 8400 to a `*.app.github.dev` URL. The port is private to your
-account by default; set it to public in the **Ports** tab to share a link.
-Codespaces sleeps after ~30 minutes idle, so this is on-demand, not always-on.
+**3. Open it.** Click the **Ports** tab next to the terminal. Port 8400 will
+be listed with a link like
+
+    https://something-random-8400.app.github.dev
+
+That link is yours alone by default. To share it with someone else,
+right-click the port -> **Port Visibility** -> **Public**. Anyone with the
+link can then use it.
+
+Things worth knowing:
+
+- It falls asleep after about 30 minutes of no use. Reopen it the same way
+  (**Code -> Codespaces**, click your existing codespace) and run `./run.sh`
+  again. You can also stop it yourself to save hours.
+- Port visibility resets to private every time it restarts, so re-do the
+  **Public** step if you're sharing a link.
+- Your library, reading positions, and cached audio live in the project
+  folder (`/workspaces/case-reader`) and survive stop/restart. They're only
+  lost if you delete the codespace itself.
+- The free plan gives 120 core-hours a month. The default machine has 2
+  cores, so that's 60 hours of it being awake. Sleeping or stopped time
+  doesn't count.
 
 ## What's inside
 

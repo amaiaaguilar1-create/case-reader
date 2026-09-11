@@ -1,7 +1,16 @@
 {
   "name": "Case Reader",
+  // onnxruntime needs Python 3.10+; this image ships 3.12.
   "image": "mcr.microsoft.com/devcontainers/python:3.12",
-  "postCreateCommand": "bash scripts/setup.sh",
+
+  // venv + deps + the 311MB model and 27MB voices. This runs in onCreate
+  // rather than postCreate so a prebuild bakes the download into the image
+  // instead of every new Codespace re-fetching ~340MB.
+  "onCreateCommand": "bash scripts/setup.sh",
+  "postAttachCommand": "echo '\\nCase Reader is ready. Start it with:  ./run.sh\\n'",
+
+  // uvicorn must bind the container's external interface for port
+  // forwarding to see it; run.sh reads HOST/PORT.
   "containerEnv": {
     "HOST": "0.0.0.0"
   },
