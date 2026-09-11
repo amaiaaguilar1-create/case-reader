@@ -1,0 +1,527 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalSpeech</title>
+<style>
+  :root{
+    --surface:#ffffff; --rail:#fafbfe; --ink:#1b1e2b; --muted:#6e7385;
+    --line:#e8eaf2; --accent:#3b4ef0; --accent2:#8a5cf6;
+    --grad:linear-gradient(135deg,#3b4ef0,#8a5cf6);
+    --sent-tint:#f0f3ff; --word-pill:#bfc9ff;
+    --radius:14px; --shadow:0 8px 32px rgba(27,30,43,.12);
+  }
+  *{box-sizing:border-box; margin:0}
+  html,body{height:100%}
+  body{
+    font:15px/1.5 Inter,-apple-system,"SF Pro Text","Segoe UI",sans-serif;
+    color:var(--ink); background:var(--surface); display:flex; overflow:hidden;
+  }
+  button{font:inherit; color:inherit; background:none; border:0; cursor:pointer}
+  button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:6px}
+
+  /* ---- library rail ---- */
+  aside{
+    width:280px; flex:none; background:var(--rail); border-right:1px solid var(--line);
+    display:flex; flex-direction:column; padding:20px 14px;
+  }
+  .logo{display:flex; align-items:center; gap:10px; padding:2px 8px 18px; font-weight:700; font-size:17px; letter-spacing:-.2px}
+  .logo .mark{width:30px; height:30px; border-radius:9px; background:var(--grad); display:grid; place-items:center; color:#fff}
+  .add{
+    display:flex; align-items:center; justify-content:center; gap:8px;
+    background:var(--grad); color:#fff; font-weight:600; border-radius:12px;
+    padding:11px; margin-bottom:16px; transition:transform .12s, box-shadow .12s;
+  }
+  .add:hover{transform:translateY(-1px); box-shadow:0 6px 18px rgba(59,78,240,.35)}
+  .lib{overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:4px}
+  .lib-item{
+    text-align:left; padding:10px 12px; border-radius:10px; display:block; width:100%;
+    position:relative; transition:background .12s;
+  }
+  .lib-item:hover{background:#f0f2fa}
+  .lib-item.active{background:#e9edff}
+  .lib-item .t{font-weight:600; font-size:14px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-right:22px}
+  .lib-item .m{font-size:12px; color:var(--muted); margin-top:3px}
+  .lib-item .bar{height:3px; border-radius:2px; background:var(--line); margin-top:8px; overflow:hidden}
+  .lib-item .bar i{display:block; height:100%; background:var(--grad); border-radius:2px}
+  .lib-item .del{
+    position:absolute; top:8px; right:8px; width:22px; height:22px; border-radius:6px;
+    color:var(--muted); display:none; place-items:center;
+  }
+  .lib-item:hover .del{display:grid}
+  .lib-item .del:hover{background:#e2e5f0; color:#d33}
+  .lib-empty{color:var(--muted); font-size:13px; text-align:center; padding:28px 10px}
+
+  /* ---- reader ---- */
+  main{flex:1; display:flex; flex-direction:column; min-width:0; position:relative}
+  .reader{flex:1; overflow-y:auto; padding:56px 32px 180px; scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){ .reader{scroll-behavior:auto} *{transition:none!important} }
+  .page{max-width:680px; margin:0 auto}
+  .page h1{
+    font-family:Charter,Georgia,"Times New Roman",serif; font-size:32px;
+    line-height:1.25; letter-spacing:-.3px; margin-bottom:28px;
+  }
+  .prose{font-family:Charter,Georgia,serif; font-size:19px; line-height:1.75; color:#23263a}
+  .sent{border-radius:6px; padding:1px 2px; margin:-1px -2px; transition:background .18s; cursor:default}
+  .sent.now{background:var(--sent-tint)}
+  .w{border-radius:5px; padding:0 1px; margin:0 -1px; cursor:pointer}
+  .w:hover{background:#e4e8ff}
+  .w.now{background:var(--word-pill)}
+  .hero{
+    height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:14px; color:var(--muted); text-align:center; padding:0 24px;
+  }
+  .hero .orb{width:72px; height:72px; border-radius:24px; background:var(--grad); opacity:.9;
+    display:grid; place-items:center; color:#fff}
+  .hero h2{color:var(--ink); font-size:22px; letter-spacing:-.2px}
+  .hero p{max-width:340px; font-size:14px}
+
+  /* ---- player bar ---- */
+  .player{
+    position:absolute; left:50%; bottom:26px; transform:translateX(-50%);
+    width:min(720px, calc(100% - 48px));
+    background:#fff; border:1px solid var(--line); border-radius:22px; box-shadow:var(--shadow);
+    padding:12px 18px 14px; display:none; flex-direction:column; gap:8px;
+  }
+  .player.on{display:flex}
+  .p-top{display:flex; align-items:center; gap:10px}
+  .scrub{flex:1; height:18px; display:flex; align-items:center; cursor:pointer}
+  .scrub .track{width:100%; height:4px; border-radius:2px; background:var(--line); overflow:hidden}
+  .scrub .fill{height:100%; width:0%; background:var(--grad); border-radius:2px}
+  .p-time{font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; min-width:72px; text-align:right}
+  .p-main{display:flex; align-items:center; justify-content:space-between; gap:12px}
+  .p-group{display:flex; align-items:center; gap:8px; flex:1}
+  .p-group.right{justify-content:flex-end}
+  .p-center{display:flex; align-items:center; gap:16px}
+  .icon-btn{width:38px; height:38px; border-radius:50%; display:grid; place-items:center; color:var(--ink); transition:background .12s}
+  .icon-btn:hover{background:#f0f2fa}
+  .play{
+    width:54px; height:54px; border-radius:50%; background:var(--grad); color:#fff;
+    display:grid; place-items:center; box-shadow:0 6px 18px rgba(94,73,242,.4);
+    transition:transform .12s;
+  }
+  .play:hover{transform:scale(1.05)}
+  .play:active{transform:scale(.97)}
+  .chip{
+    border:1px solid var(--line); border-radius:999px; padding:7px 13px; font-weight:600;
+    font-size:13px; display:flex; align-items:center; gap:6px; transition:background .12s;
+  }
+  .chip:hover{background:#f0f2fa}
+  .chip .dot{width:8px; height:8px; border-radius:50%; background:var(--grad)}
+  select.chip{appearance:none; -webkit-appearance:none; padding-right:26px;
+    background:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6"><path d="M1 1l4 4 4-4" stroke="%236e7385" fill="none" stroke-width="1.5"/></svg>') no-repeat right 11px center}
+  .spin{width:16px; height:16px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%;
+    animation:sp .7s linear infinite}
+  @keyframes sp{to{transform:rotate(360deg)}}
+
+  /* ---- modal ---- */
+  dialog{
+    border:0; border-radius:18px; box-shadow:var(--shadow); padding:0; width:min(480px, 92vw);
+  }
+  dialog::backdrop{background:rgba(27,30,43,.35); backdrop-filter:blur(2px)}
+  .dlg{padding:24px}
+  .dlg h3{font-size:18px; letter-spacing:-.2px; margin-bottom:16px}
+  .tabs{display:flex; gap:4px; background:#f0f2fa; border-radius:10px; padding:4px; margin-bottom:16px}
+  .tabs button{flex:1; padding:7px; border-radius:8px; font-weight:600; font-size:13px; color:var(--muted)}
+  .tabs button.on{background:#fff; color:var(--ink); box-shadow:0 1px 4px rgba(27,30,43,.1)}
+  .pane{display:none} .pane.on{display:block}
+  .drop{
+    border:1.5px dashed #c9cede; border-radius:12px; padding:34px 16px; text-align:center;
+    color:var(--muted); font-size:14px; cursor:pointer; transition:border-color .12s, background .12s;
+  }
+  .drop:hover,.drop.over{border-color:var(--accent); background:#f6f8ff}
+  .field{width:100%; border:1px solid var(--line); border-radius:10px; padding:10px 12px; font:inherit; margin-bottom:10px}
+  textarea.field{min-height:130px; resize:vertical}
+  .dlg .go{width:100%; background:var(--grad); color:#fff; font-weight:600; border-radius:10px; padding:11px}
+  .dlg .go:disabled{opacity:.5; cursor:default}
+
+  .toast{
+    position:fixed; top:20px; left:50%; transform:translateX(-50%) translateY(-8px);
+    background:var(--ink); color:#fff; border-radius:10px; padding:10px 16px; font-size:13px;
+    opacity:0; pointer-events:none; transition:opacity .18s, transform .18s; z-index:99; max-width:80vw;
+  }
+  .toast.on{opacity:1; transform:translateX(-50%) translateY(0)}
+</style>
+</head>
+<body>
+
+<aside>
+  <div class="logo"><span class="mark">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+  </span>LocalSpeech</div>
+  <button class="add" id="addBtn">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 5v14M5 12h14"/></svg>
+    Add to library
+  </button>
+  <nav class="lib" id="lib" aria-label="Library"></nav>
+</aside>
+
+<main>
+  <div class="reader" id="reader">
+    <div class="hero" id="hero">
+      <div class="orb">
+        <svg width="30" height="30" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+      </div>
+      <h2>Listen to anything</h2>
+      <p>Add a PDF, EPUB, Word file, article link, or pasted text, and LocalSpeech reads it aloud. Everything stays on this computer.</p>
+    </div>
+    <article class="page" id="page" hidden>
+      <h1 id="docTitle"></h1>
+      <div class="prose" id="prose"></div>
+    </article>
+  </div>
+
+  <div class="player" id="player">
+    <div class="p-top">
+      <div class="scrub" id="scrub" role="slider" aria-label="Progress" tabindex="0">
+        <div class="track"><div class="fill" id="fill"></div></div>
+      </div>
+      <div class="p-time" id="time">0:00 / 0:00</div>
+    </div>
+    <div class="p-main">
+      <div class="p-group">
+        <select class="chip" id="voice" aria-label="Voice"></select>
+      </div>
+      <div class="p-center">
+        <button class="icon-btn" id="prev" aria-label="Previous sentence">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6L18 6v12l-8.5-6z"/></svg>
+        </button>
+        <button class="play" id="play" aria-label="Play">
+          <span id="playIcon"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+        </button>
+        <button class="icon-btn" id="next" aria-label="Next sentence">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18V6l8.5 6L6 18z"/></svg>
+        </button>
+      </div>
+      <div class="p-group right">
+        <button class="chip" id="speed" aria-label="Playback speed"><span class="dot"></span><span id="speedTxt">1x</span></button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<dialog id="dlg">
+  <div class="dlg">
+    <h3>Add to library</h3>
+    <div class="tabs" role="tablist">
+      <button class="on" data-pane="file" role="tab">Upload</button>
+      <button data-pane="paste" role="tab">Paste text</button>
+      <button data-pane="url" role="tab">Web link</button>
+    </div>
+    <div class="pane on" data-pane="file">
+      <div class="drop" id="drop">Drop a file here or click to browse<br>
+        <small>PDF, EPUB, DOCX, TXT, Markdown</small></div>
+      <input type="file" id="file" accept=".pdf,.epub,.docx,.txt,.md" hidden>
+    </div>
+    <div class="pane" data-pane="paste">
+      <input class="field" id="pTitle" placeholder="Title">
+      <textarea class="field" id="pText" placeholder="Paste anything you want to hear"></textarea>
+      <button class="go" id="pGo">Add text</button>
+    </div>
+    <div class="pane" data-pane="url">
+      <input class="field" id="uUrl" placeholder="https://example.com/article">
+      <button class="go" id="uGo">Add article</button>
+    </div>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  return r.json();
+};
+const toast = msg => {
+  $("toast").textContent = msg;
+  $("toast").classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => $("toast").classList.remove("on"), 3200);
+};
+
+const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const state = {
+  doc: null, sent: 0, playing: false, speed: 1, voice: "aria",
+  audio: null, timings: [], chunkCache: new Map(), durations: new Map(), raf: 0,
+};
+
+/* ---------- library ---------- */
+async function loadLibrary() {
+  const docs = await api("/api/documents");
+  const lib = $("lib");
+  lib.innerHTML = "";
+  if (!docs.length) {
+    lib.innerHTML = '<div class="lib-empty">Your library is empty.<br>Add something to start listening.</div>';
+    return;
+  }
+  for (const d of docs) {
+    const el = document.createElement("button");
+    el.className = "lib-item" + (state.doc?.id === d.id ? " active" : "");
+    const pct = d.total ? Math.round(100 * d.position / d.total) : 0;
+    el.innerHTML = `<div class="t"></div>
+      <div class="m">${d.total} parts \u00b7 ${pct}% listened</div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <span class="del" title="Remove" role="button" tabindex="0">\u00d7</span>`;
+    el.querySelector(".t").textContent = d.title;
+    el.onclick = e => {
+      if (e.target.classList.contains("del")) { removeDoc(d.id, d.title); return; }
+      openDoc(d.id);
+    };
+    lib.append(el);
+  }
+}
+
+async function removeDoc(id, title) {
+  await api(`/api/documents/${id}`, { method: "DELETE" });
+  if (state.doc?.id === id) { stop(); state.doc = null; $("page").hidden = true; $("hero").style.display = ""; $("player").classList.remove("on"); }
+  toast(`Removed \u201c${title}\u201d`);
+  loadLibrary();
+}
+
+/* ---------- reader ---------- */
+async function openDoc(id) {
+  stop();
+  state.doc = await api(`/api/documents/${id}`);
+  state.sent = Math.min(state.doc.position, state.doc.sentences.length - 1);
+  state.chunkCache.clear(); state.durations.clear();
+  $("hero").style.display = "none";
+  $("page").hidden = false;
+  $("docTitle").textContent = state.doc.title;
+  const prose = $("prose");
+  prose.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for (const s of state.doc.sentences) {
+    const span = document.createElement("span");
+    span.className = "sent"; span.id = "s" + s.id;
+    s.words.forEach(([w], wi) => {
+      const el = document.createElement("span");
+      el.className = "w"; el.textContent = w; el.dataset.s = s.id; el.dataset.w = wi;
+      frag2Add(span, el);
+    });
+    frag.append(span, document.createTextNode(" "));
+  }
+  prose.append(frag);
+  prose.onclick = e => {
+    const w = e.target.closest(".w");
+    if (w) jumpTo(+w.dataset.s);
+  };
+  $("player").classList.add("on");
+  markSentence();
+  updateTime();
+  loadLibrary();
+}
+function frag2Add(parent, el) {
+  if (parent.childNodes.length) parent.append(" ");
+  parent.append(el);
+}
+
+/* ---------- playback ---------- */
+async function fetchChunk(sentId) {
+  const key = `${sentId}|${state.voice}`;
+  if (!state.chunkCache.has(key)) {
+    state.chunkCache.set(key, api(`/api/chunk/${state.doc.id}/${sentId}?voice=${state.voice}`)
+      .then(c => { state.durations.set(sentId, c.duration); return c; }));
+  }
+  return state.chunkCache.get(key);
+}
+
+async function playSentence(sentId) {
+  if (!state.doc) return;
+  if (sentId >= state.doc.sentences.length) { stop(); return; }
+  state.sent = sentId;
+  markSentence();
+  setPlayIcon("load");
+  let chunk;
+  try { chunk = await fetchChunk(sentId); }
+  catch (e) { toast("Playback failed: " + e.message); stop(); return; }
+  if (state.sent !== sentId) return; // user seeked while loading
+  state.timings = chunk.timings;
+  if (state.audio) { state.audio.onended = null; state.audio.pause(); }
+  const a = new Audio(chunk.audio);
+  a.playbackRate = state.speed;
+  if ("preservesPitch" in a) a.preservesPitch = true;
+  state.audio = a;
+  a.onended = () => playSentence(sentId + 1);
+  try { await a.play(); } catch { stop(); return; }
+  state.playing = true;
+  setPlayIcon("pause");
+  savePosition();
+  fetchChunk(sentId + 1).catch(() => {}); // client-side warm; server prefetches deeper
+  cancelAnimationFrame(state.raf);
+  highlightLoop();
+}
+
+function highlightLoop() {
+  state.raf = requestAnimationFrame(highlightLoop);
+  const a = state.audio;
+  if (!a || a.paused) return;
+  const t = a.currentTime;
+  let idx = state.timings.findIndex(([s, e]) => t >= s && t < e);
+  if (idx === -1) idx = t >= (state.timings.at(-1)?.[1] ?? 0) ? state.timings.length - 1 : 0;
+  setWord(idx);
+  updateTime();
+}
+
+let lastWordEl = null;
+function setWord(wi) {
+  const el = document.querySelector(`.w[data-s="${state.sent}"][data-w="${wi}"]`);
+  if (el === lastWordEl) return;
+  lastWordEl?.classList.remove("now");
+  el?.classList.add("now");
+  lastWordEl = el;
+}
+
+let lastSentEl = null;
+function markSentence() {
+  lastWordEl?.classList.remove("now"); lastWordEl = null;
+  lastSentEl?.classList.remove("now");
+  lastSentEl = $("s" + state.sent);
+  if (lastSentEl) {
+    lastSentEl.classList.add("now");
+    const r = lastSentEl.getBoundingClientRect(), reader = $("reader").getBoundingClientRect();
+    if (r.top < reader.top + 60 || r.bottom > reader.bottom - 190)
+      lastSentEl.scrollIntoView({ block: "center" });
+  }
+  updateFill();
+}
+
+function jumpTo(sentId) { playSentence(sentId); }
+function stop() {
+  state.playing = false;
+  cancelAnimationFrame(state.raf);
+  if (state.audio) { state.audio.onended = null; state.audio.pause(); }
+  setPlayIcon("play");
+}
+function pause() {
+  state.playing = false;
+  state.audio?.pause();
+  setPlayIcon("play");
+  savePosition();
+}
+function resume() {
+  if (!state.doc) return;
+  if (state.audio && state.audio.paused && state.audio.currentTime > 0 && !state.audio.ended) {
+    state.audio.play(); state.playing = true; setPlayIcon("pause"); highlightLoop();
+  } else playSentence(state.sent);
+}
+
+const ICONS = {
+  play: '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+  pause: '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>',
+  load: '<span class="spin"></span>',
+};
+function setPlayIcon(k) {
+  $("playIcon").innerHTML = ICONS[k];
+  $("play").setAttribute("aria-label", k === "pause" ? "Pause" : "Play");
+}
+
+/* ---------- progress / time ---------- */
+const AVG = 3.2; // fallback seconds/sentence until real durations arrive
+function docTimes() {
+  const n = state.doc.sentences.length;
+  let before = 0, total = 0;
+  for (let i = 0; i < n; i++) {
+    const d = state.durations.get(i) ?? AVG;
+    if (i < state.sent) before += d;
+    total += d;
+  }
+  before += state.audio?.currentTime || 0;
+  return [before / state.speed, total / state.speed];
+}
+const fmt = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+function updateTime() {
+  if (!state.doc) return;
+  const [cur, total] = docTimes();
+  $("time").textContent = `${fmt(cur)} / ${fmt(total)}`;
+  updateFill();
+}
+function updateFill() {
+  if (!state.doc) return;
+  const [cur, total] = docTimes();
+  $("fill").style.width = (total ? 100 * cur / total : 0) + "%";
+}
+let saveT = 0;
+function savePosition() {
+  clearTimeout(saveT);
+  saveT = setTimeout(() => {
+    if (state.doc) api(`/api/documents/${state.doc.id}/position`,
+      { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sentence: state.sent }) })
+      .then(loadLibrary).catch(() => {});
+  }, 600);
+}
+
+/* ---------- controls ---------- */
+$("play").onclick = () => state.playing ? pause() : resume();
+$("prev").onclick = () => state.doc && playSentence(Math.max(0, state.sent - 1));
+$("next").onclick = () => state.doc && playSentence(state.sent + 1);
+$("speed").onclick = () => {
+  state.speed = SPEEDS[(SPEEDS.indexOf(state.speed) + 1) % SPEEDS.length];
+  $("speedTxt").textContent = state.speed + "x";
+  if (state.audio) state.audio.playbackRate = state.speed;
+  updateTime();
+};
+$("scrub").onclick = e => {
+  if (!state.doc) return;
+  const r = $("scrub").getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+  playSentence(Math.floor(frac * state.doc.sentences.length));
+};
+$("voice").onchange = e => {
+  state.voice = e.target.value;
+  state.chunkCache.clear();
+  if (state.playing) playSentence(state.sent);
+};
+document.addEventListener("keydown", e => {
+  if (e.target.matches("input,textarea,select") || $("dlg").open) return;
+  if (e.code === "Space") { e.preventDefault(); $("play").click(); }
+  if (e.key === "ArrowLeft") $("prev").click();
+  if (e.key === "ArrowRight") $("next").click();
+});
+
+/* ---------- import ---------- */
+$("addBtn").onclick = () => $("dlg").showModal();
+$("dlg").onclick = e => { if (e.target === $("dlg")) $("dlg").close(); };
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.dataset.pane === b.dataset.pane));
+});
+async function imported(p) {
+  try {
+    const doc = await p;
+    $("dlg").close();
+    toast(`Added \u201c${doc.title}\u201d`);
+    await loadLibrary();
+    openDoc(doc.id);
+  } catch (e) { toast(e.message); }
+}
+$("drop").onclick = () => $("file").click();
+$("drop").ondragover = e => { e.preventDefault(); $("drop").classList.add("over"); };
+$("drop").ondragleave = () => $("drop").classList.remove("over");
+$("drop").ondrop = e => { e.preventDefault(); $("drop").classList.remove("over");
+  if (e.dataTransfer.files[0]) sendFile(e.dataTransfer.files[0]); };
+$("file").onchange = () => $("file").files[0] && sendFile($("file").files[0]);
+function sendFile(f) {
+  const fd = new FormData(); fd.append("file", f);
+  imported(api("/api/documents/file", { method: "POST", body: fd }));
+}
+$("pGo").onclick = () => imported(api("/api/documents/text", {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ title: $("pTitle").value, text: $("pText").value }) }));
+$("uGo").onclick = () => imported(api("/api/documents/url", {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ url: $("uUrl").value }) }));
+
+/* ---------- boot ---------- */
+(async () => {
+  const voices = await api("/api/voices");
+  $("voice").innerHTML = voices.map(v => `<option value="${v.id}">${v.label}</option>`).join("");
+  $("voice").value = state.voice;
+  await loadLibrary();
+})();
+</script>
+</body>
+</html>

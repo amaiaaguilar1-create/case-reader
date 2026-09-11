@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Downloaded by scripts/download_model.sh (311MB + 27MB)
+kokoro-v1.0.onnx
+voices-v1.0.bin
+
+# Runtime state
+localspeech.db
+cache/
+
+.DS_Store
