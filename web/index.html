@@ -232,7 +232,11 @@
 "use strict";
 const $ = id => document.getElementById(id);
 const api = async (path, opts) => {
-  const r = await fetch(path, opts);
+  let r;
+  // A dead backend surfaces as a fetch TypeError; say so rather than letting
+  // "Load failed" read like the document was rejected.
+  try { r = await fetch(path, opts); }
+  catch { throw new Error("Can't reach the Case Reader server \u2014 it isn't running. Restart it with ./run.sh"); }
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
   return r.json();
 };
