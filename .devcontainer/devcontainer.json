@@ -7,7 +7,7 @@
   // rather than postCreate so a prebuild bakes the download into the image
   // instead of every new Codespace re-fetching ~340MB.
   "onCreateCommand": "bash scripts/setup.sh",
-  "postAttachCommand": "echo '\\nCase Reader is ready. Start it with:  ./run.sh\\n'",
+  "postAttachCommand": "echo 'Case Reader is ready. Start it with:  ./run.sh'",
 
   // uvicorn must bind the container's external interface for port
   // forwarding to see it; run.sh reads HOST/PORT.
