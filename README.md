@@ -13,6 +13,24 @@ First run creates a venv, installs dependencies, and downloads the Kokoro
 fp32 model (311MB) + voices (27MB) from GitHub releases, then opens
 http://localhost:8400.
 
+Needs Python 3.10+ (onnxruntime has no 3.9 wheels; macOS still ships 3.9).
+`brew install python@3.12`, or point setup at a specific interpreter with
+`PYTHON=/path/to/python3.12 ./run.sh`.
+
+## Run it on the web (GitHub Codespaces)
+
+The app needs a real Python process and ~340MB of model on disk, so it can't
+go on a static host like GitHub Pages. Codespaces runs it as-is:
+
+On the repo, click **Code -> Codespaces -> Create codespace on main**. The
+devcontainer pins Python 3.12 and runs `scripts/setup.sh`, then serving with
+
+    ./run.sh
+
+forwards port 8400 to a `*.app.github.dev` URL. The port is private to your
+account by default; set it to public in the **Ports** tab to share a link.
+Codespaces sleeps after ~30 minutes idle, so this is on-demand, not always-on.
+
 ## What's inside
 
 - core/       parsing (PDF/EPUB/DOCX/TXT/MD), sentence chunking, word-timing

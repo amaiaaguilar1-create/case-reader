@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# LocalSpeech: one command to set up and run.
+# Case Reader: one command to set up and run.
 set -euo pipefail
 cd "$(dirname "$0")"
-if [ ! -d .venv ]; then
-  python3 -m venv .venv
-  ./.venv/bin/pip install -q -U pip
-  ./.venv/bin/pip install -q kokoro-onnx soundfile pymupdf ebooklib python-docx \
-      fastapi "uvicorn[standard]" python-multipart trafilatura pytest
+bash scripts/setup.sh
+HOST="${HOST:-127.0.0.1}"
+PORT="${PORT:-8400}"
+# In Codespaces the port is forwarded by the platform, so don't open a browser.
+if [ -z "${CODESPACES:-}" ]; then
+  ( sleep 1.5 && (open "http://localhost:$PORT" || xdg-open "http://localhost:$PORT") >/dev/null 2>&1 ) &
 fi
-bash scripts/download_model.sh
-echo "LocalSpeech running at http://localhost:8400"
-( sleep 1.5 && (open http://localhost:8400 || xdg-open http://localhost:8400) >/dev/null 2>&1 ) &
-exec ./.venv/bin/uvicorn server.app:app --port 8400
+echo "Case Reader running at http://localhost:$PORT"
+exec ./.venv/bin/uvicorn server.app:app --host "$HOST" --port "$PORT"

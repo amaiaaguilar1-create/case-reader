@@ -1,0 +1,10 @@
+kokoro-onnx
+soundfile
+pymupdf
+ebooklib
+python-docx
+fastapi
+uvicorn[standard]
+python-multipart
+trafilatura
+pytest
