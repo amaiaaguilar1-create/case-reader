@@ -15,12 +15,18 @@ class Sentence:
     id: int
     text: str
     words: list[Word] = field(default_factory=list)
+    #: 'body' for prose; see core.layout.FURNITURE for the skippable kinds.
+    kind: str = "body"
+    #: Per-word (page, x0, y0, x1, y1) in PDF points; empty when there's no layout.
+    boxes: list[tuple[int, float, float, float, float]] = field(default_factory=list)
 
 
 @dataclass
 class Document:
     title: str
     sentences: list[Sentence] = field(default_factory=list)
+    #: Per-page (width, height) in PDF points; empty for non-paged sources.
+    pages: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def full_text(self) -> str:

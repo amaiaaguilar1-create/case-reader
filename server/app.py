@@ -9,6 +9,7 @@ One process, three responsibilities:
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -20,12 +21,16 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from core.chunker import build_document
+from core.model import Document
 from core.parsers import PARSERS, ScannedPDFError
 from engines.kokoro_engine import DEFAULT_PRESET, KokoroEngine
 
 ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "localspeech.db"
+LIBRARY = ROOT / "library"          # originals, kept so pages can be re-rendered
+PAGE_CACHE = ROOT / "cache" / "pages"
 PREFETCH_AHEAD = 3
+RENDER_SCALE = 2.0                  # 2x keeps page text crisp on retina displays
 
 app = FastAPI(title="LocalSpeech")
 engine: KokoroEngine | None = None
@@ -40,17 +45,33 @@ def db() -> sqlite3.Connection:
     return conn
 
 
+#: Columns added after the first release; applied to existing libraries in place.
+_MIGRATIONS = {
+    "documents": {"source_ext": "TEXT", "pages": "TEXT"},
+    "sentences": {"kind": "TEXT NOT NULL DEFAULT 'body'", "boxes": "TEXT NOT NULL DEFAULT '[]'"},
+}
+
+
 def init_db() -> None:
     with db() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS documents(
             id INTEGER PRIMARY KEY, title TEXT NOT NULL,
-            created REAL DEFAULT (unixepoch()), position INTEGER DEFAULT 0);
+            created REAL DEFAULT (unixepoch()), position INTEGER DEFAULT 0,
+            source_ext TEXT, pages TEXT);
         CREATE TABLE IF NOT EXISTS sentences(
             doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
             sent_id INTEGER NOT NULL, text TEXT NOT NULL, words TEXT NOT NULL,
+            kind TEXT NOT NULL DEFAULT 'body', boxes TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY(doc_id, sent_id));
         """)
+        for table, columns in _MIGRATIONS.items():
+            have = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            for name, ddl in columns.items():
+                if name not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+    LIBRARY.mkdir(exist_ok=True)
+    PAGE_CACHE.mkdir(parents=True, exist_ok=True)
 
 
 @app.on_event("startup")
@@ -79,18 +100,23 @@ class UrlImport(BaseModel):
     url: str
 
 
-def _store(title: str, text: str) -> dict:
-    doc = build_document(title, text)
+def _store(title: str, doc: Document, source: Path | None = None, ext: str = "") -> dict:
     if not doc.sentences:
         raise HTTPException(422, "No readable text found in this document.")
     with db() as c:
-        cur = c.execute("INSERT INTO documents(title) VALUES(?)", (title,))
+        cur = c.execute("INSERT INTO documents(title, source_ext, pages) VALUES(?,?,?)",
+                        (title, ext or None,
+                         json.dumps(doc.pages) if doc.pages else None))
         doc_id = cur.lastrowid
         c.executemany(
-            "INSERT INTO sentences VALUES(?,?,?,?)",
+            "INSERT INTO sentences(doc_id,sent_id,text,words,kind,boxes) VALUES(?,?,?,?,?,?)",
             [(doc_id, s.id, s.text,
-              json.dumps([[w.text, w.start, w.end] for w in s.words]))
+              json.dumps([[w.text, w.start, w.end] for w in s.words]),
+              s.kind, json.dumps(s.boxes))
              for s in doc.sentences])
+    # Keep the original only when it has pages we can render alongside the text.
+    if source and doc.pages:
+        shutil.copyfile(source, LIBRARY / f"{doc_id}{ext}")
     return {"id": doc_id, "title": title, "sentences": len(doc.sentences)}
 
 
@@ -115,18 +141,19 @@ async def import_file(file: UploadFile):
         tmp_path = Path(tmp.name)
     try:
         parsed = PARSERS[ext](tmp_path)
+        title = Path(file.filename or "Untitled").stem
+        return _store(title, parsed, source=tmp_path, ext=ext)
     except ScannedPDFError:
         raise HTTPException(422, "This PDF has no extractable text. "
                                  "It looks scanned; OCR isn't supported yet.")
     finally:
         tmp_path.unlink(missing_ok=True)
-    title = Path(file.filename or "Untitled").stem
-    return _store(title, parsed.full_text)
 
 
 @app.post("/api/documents/text")
 def import_text(body: TextImport):
-    return _store(body.title.strip() or "Pasted text", body.text)
+    title = body.title.strip() or "Pasted text"
+    return _store(title, build_document(title, body.text))
 
 
 @app.post("/api/documents/url")
@@ -138,7 +165,7 @@ def import_url(body: UrlImport):
         raise HTTPException(422, "Couldn't extract an article from that URL.")
     meta = trafilatura.extract_metadata(html)
     title = (meta.title if meta and meta.title else body.url)[:120]
-    return _store(title, text)
+    return _store(title, build_document(title, text))
 
 
 @app.get("/api/documents/{doc_id}")
@@ -147,19 +174,55 @@ def get_document(doc_id: int):
         doc = c.execute("SELECT * FROM documents WHERE id=?", (doc_id,)).fetchone()
         if not doc:
             raise HTTPException(404, "Document not found")
-        rows = c.execute("SELECT sent_id, text, words FROM sentences "
+        rows = c.execute("SELECT sent_id, text, words, kind, boxes FROM sentences "
                          "WHERE doc_id=? ORDER BY sent_id", (doc_id,)).fetchall()
     return {"id": doc["id"], "title": doc["title"], "position": doc["position"],
+            "pages": json.loads(doc["pages"]) if doc["pages"] else [],
             "sentences": [{"id": r["sent_id"], "text": r["text"],
-                           "words": json.loads(r["words"])} for r in rows]}
+                           "words": json.loads(r["words"]), "kind": r["kind"],
+                           "boxes": json.loads(r["boxes"])} for r in rows]}
 
 
 @app.delete("/api/documents/{doc_id}")
 def delete_document(doc_id: int):
     with db() as c:
         c.execute("PRAGMA foreign_keys=ON")
+        row = c.execute("SELECT source_ext FROM documents WHERE id=?", (doc_id,)).fetchone()
         c.execute("DELETE FROM documents WHERE id=?", (doc_id,))
+    if row and row["source_ext"]:
+        (LIBRARY / f"{doc_id}{row['source_ext']}").unlink(missing_ok=True)
+    for png in PAGE_CACHE.glob(f"{doc_id}-*.png"):
+        png.unlink(missing_ok=True)
     return {"ok": True}
+
+
+@app.get("/api/page/{doc_id}/{page_no}")
+def get_page(doc_id: int, page_no: int):
+    """Render one page of the stored original, cached as PNG."""
+    with db() as c:
+        row = c.execute("SELECT source_ext FROM documents WHERE id=?", (doc_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Document not found")
+    if not row["source_ext"]:
+        raise HTTPException(404, "No original page image for this document.")
+    src = LIBRARY / f"{doc_id}{row['source_ext']}"
+    if not src.exists():
+        raise HTTPException(404, "The original file is no longer on disk.")
+    out = PAGE_CACHE / f"{doc_id}-{page_no}@{RENDER_SCALE:g}.png"
+    if not out.exists():
+        import fitz
+        pdf = fitz.open(str(src))
+        try:
+            if not 0 <= page_no < pdf.page_count:
+                raise HTTPException(404, "Page out of range")
+            pix = pdf[page_no].get_pixmap(matrix=fitz.Matrix(RENDER_SCALE, RENDER_SCALE))
+            tmp = out.with_suffix(".tmp.png")  # atomic: concurrent readers see whole files
+            pix.save(str(tmp))
+            tmp.replace(out)
+        finally:
+            pdf.close()
+    return FileResponse(out, media_type="image/png",
+                        headers={"Cache-Control": "private, max-age=86400"})
 
 
 class Position(BaseModel):

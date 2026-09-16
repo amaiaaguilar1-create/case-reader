@@ -9,6 +9,8 @@ voices-v1.0.bin
 # Runtime state
 localspeech.db
 cache/
+library/
+:memory:.ses
 
 # Sidecar junk from a tool handed the ":memory:" SQLite DSN as a file path
 :memory:*

@@ -10,13 +10,12 @@ class ScannedPDFError(Exception):
 
 
 def parse_pdf(path: str | Path) -> Document:
-    import fitz  # pymupdf
-    doc = fitz.open(str(path))
-    pages = [page.get_text("text") for page in doc]
-    text = "\n\n".join(pages).strip()
-    if not text:
+    """Parse a PDF keeping page geometry, word boxes, and furniture labels."""
+    from .layout import build_layout_document, extract_layout
+    layout = extract_layout(path)
+    if not layout.has_text:
         raise ScannedPDFError(f"{path}: no extractable text (scanned/image PDF?)")
-    return build_document(Path(path).stem, text)
+    return build_layout_document(Path(path).stem, layout)
 
 
 def parse_docx(path: str | Path) -> Document:

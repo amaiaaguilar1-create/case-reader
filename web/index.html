@@ -68,6 +68,25 @@
   .w{border-radius:5px; padding:0 1px; margin:0 -1px; cursor:pointer}
   .w:hover{background:#e4e8ff}
   .w.now{background:var(--word-pill)}
+  .prose.dim .sent.furn{opacity:.38}
+
+  /* ---- original page view ---- */
+  .sheets{max-width:940px; margin:0 auto; display:flex; flex-direction:column; gap:24px}
+  .sheet{
+    position:relative; background:#fff; border:1px solid var(--line); border-radius:5px;
+    box-shadow:0 3px 18px rgba(27,30,43,.13); overflow:hidden;
+  }
+  .sheet img{display:block; width:100%; height:auto}
+  .ov{position:absolute; inset:0}
+  /* Highlights sit above the page image; hit regions below them catch clicks. */
+  .ov .sb,.ov .wb{position:absolute; border-radius:3px; pointer-events:none; z-index:2}
+  .ov .sb{background:rgba(59,78,240,.13)}
+  .ov .wb{background:rgba(138,92,246,.34); mix-blend-mode:multiply}
+  .ov .hit{position:absolute; z-index:1; cursor:pointer; border-radius:3px}
+  .ov .hit:hover{background:rgba(59,78,240,.07)}
+  .ov .hit.furn{cursor:default}
+  .ov .hit.furn:hover{background:none}
+
   .hero{
     height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:14px; color:var(--muted); text-align:center; padding:0 24px;
@@ -170,6 +189,7 @@
       <h1 id="docTitle"></h1>
       <div class="prose" id="prose"></div>
     </article>
+    <div class="sheets" id="sheets" hidden></div>
   </div>
 
   <div class="player" id="player">
@@ -182,6 +202,10 @@
     <div class="p-main">
       <div class="p-group">
         <select class="chip" id="voice" aria-label="Voice"></select>
+        <button class="chip" id="furn" aria-pressed="false"
+                title="Read running heads, page numbers, footnotes and licensing text">
+          <span id="furnTxt">Notes off</span>
+        </button>
       </div>
       <div class="p-center">
         <button class="icon-btn" id="prev" aria-label="Previous sentence">
@@ -195,6 +219,7 @@
         </button>
       </div>
       <div class="p-group right">
+        <button class="chip" id="view" aria-label="Reading view" hidden><span id="viewTxt">Original</span></button>
         <button class="chip" id="speed" aria-label="Playback speed"><span class="dot"></span><span id="speedTxt">1x</span></button>
       </div>
     </div>
@@ -248,10 +273,32 @@ const toast = msg => {
 };
 
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
+const PREF = {
+  get furniture() { return localStorage.getItem("cr.furniture") === "1"; },
+  set furniture(v) { localStorage.setItem("cr.furniture", v ? "1" : "0"); },
+  get view() { return localStorage.getItem("cr.view") === "text" ? "text" : "original"; },
+  set view(v) { localStorage.setItem("cr.view", v); },
+};
 const state = {
   doc: null, sent: 0, playing: false, speed: 1, voice: "aria",
   audio: null, timings: [], chunkCache: new Map(), durations: new Map(), raf: 0,
+  // "original" paints highlights onto rendered PDF pages; "text" reflows prose.
+  view: PREF.view, readFurniture: PREF.furniture, ovs: [],
 };
+
+/* Running heads, page numbers, footnotes and licensing text are skipped
+   unless the reader explicitly asks to hear them. */
+const isReadable = i => {
+  const s = state.doc?.sentences[i];
+  return !!s && (state.readFurniture || s.kind === "body");
+};
+function nextReadable(from, dir = 1) {
+  const n = state.doc?.sentences.length ?? 0;
+  for (let i = from; i >= 0 && i < n; i += dir) if (isReadable(i)) return i;
+  return -1;
+}
+const readableIds = () =>
+  state.doc ? state.doc.sentences.map((_, i) => i).filter(isReadable) : [];
 
 /* ---------- library ---------- */
 async function loadLibrary() {
@@ -281,7 +328,12 @@ async function loadLibrary() {
 
 async function removeDoc(id, title) {
   await api(`/api/documents/${id}`, { method: "DELETE" });
-  if (state.doc?.id === id) { stop(); state.doc = null; $("page").hidden = true; $("hero").style.display = ""; $("player").classList.remove("on"); }
+  if (state.doc?.id === id) {
+    stop(); state.doc = null;
+    $("page").hidden = $("sheets").hidden = true;
+    $("hero").style.display = "";
+    $("player").classList.remove("on");
+  }
   toast(`Removed \u201c${title}\u201d`);
   loadLibrary();
 }
@@ -290,21 +342,32 @@ async function removeDoc(id, title) {
 async function openDoc(id) {
   stop();
   state.doc = await api(`/api/documents/${id}`);
-  state.sent = Math.min(state.doc.position, state.doc.sentences.length - 1);
+  const start = Math.min(state.doc.position, state.doc.sentences.length - 1);
+  state.sent = Math.max(0, nextReadable(start, 1));
   state.chunkCache.clear(); state.durations.clear();
   $("hero").style.display = "none";
-  $("page").hidden = false;
   $("docTitle").textContent = state.doc.title;
+  renderText();
+  renderOriginal();
+  $("player").classList.add("on");
+  applyView();
+  updateTime();
+  loadLibrary();
+}
+
+function renderText() {
   const prose = $("prose");
   prose.innerHTML = "";
   const frag = document.createDocumentFragment();
   for (const s of state.doc.sentences) {
     const span = document.createElement("span");
-    span.className = "sent"; span.id = "s" + s.id;
+    span.className = "sent" + (s.kind === "body" ? "" : " furn");
+    span.id = "s" + s.id;
     s.words.forEach(([w], wi) => {
       const el = document.createElement("span");
       el.className = "w"; el.textContent = w; el.dataset.s = s.id; el.dataset.w = wi;
-      frag2Add(span, el);
+      if (span.childNodes.length) span.append(" ");
+      span.append(el);
     });
     frag.append(span, document.createTextNode(" "));
   }
@@ -313,14 +376,115 @@ async function openDoc(id) {
     const w = e.target.closest(".w");
     if (w) jumpTo(+w.dataset.s);
   };
-  $("player").classList.add("on");
-  markSentence();
-  updateTime();
-  loadLibrary();
 }
-function frag2Add(parent, el) {
-  if (parent.childNodes.length) parent.append(" ");
-  parent.append(el);
+
+/* ---------- original page view ---------- */
+/* Boxes are PDF points; positioning in percentages lets the overlay track the
+   page image at whatever width it renders. */
+function place(el, r, [pw, ph]) {
+  el.style.left = (100 * r.x0 / pw) + "%";
+  el.style.top = (100 * r.y0 / ph) + "%";
+  el.style.width = (100 * (r.x1 - r.x0) / pw) + "%";
+  el.style.height = (100 * (r.y1 - r.y0) / ph) + "%";
+}
+
+/** Merge a sentence's word boxes into one rect per visual line. */
+function lineRuns(boxes) {
+  const runs = [];
+  for (const [page, x0, y0, x1, y1] of boxes || []) {
+    if (!(x1 > x0 && y1 > y0)) continue;   // unmatched word; no box to draw
+    const last = runs.at(-1);
+    if (last && last.page === page &&
+        Math.abs(y0 - last.y0) <= (last.y1 - last.y0) * 0.6) {
+      last.x0 = Math.min(last.x0, x0); last.y0 = Math.min(last.y0, y0);
+      last.x1 = Math.max(last.x1, x1); last.y1 = Math.max(last.y1, y1);
+    } else {
+      runs.push({ page, x0, y0, x1, y1 });
+    }
+  }
+  return runs;
+}
+
+function renderOriginal() {
+  const host = $("sheets");
+  host.innerHTML = "";
+  state.ovs = [];
+  const pages = state.doc.pages || [];
+  if (!pages.length) return;
+  const frag = document.createDocumentFragment();
+  pages.forEach(([w, h], i) => {
+    const sheet = document.createElement("div");
+    sheet.className = "sheet";
+    sheet.style.aspectRatio = `${w} / ${h}`;  // hold the space before the image lands
+    const img = document.createElement("img");
+    img.loading = "lazy"; img.decoding = "async";
+    img.alt = `Page ${i + 1}`;
+    img.src = `/api/page/${state.doc.id}/${i}`;
+    const ov = document.createElement("div");
+    ov.className = "ov";
+    sheet.append(img, ov);
+    frag.append(sheet);
+    state.ovs.push(ov);
+  });
+  host.append(frag);
+  for (const s of state.doc.sentences) {
+    for (const r of lineRuns(s.boxes)) {
+      const ov = state.ovs[r.page];
+      if (!ov) continue;
+      const hit = document.createElement("div");
+      hit.className = "hit" + (s.kind === "body" ? "" : " furn");
+      hit.dataset.s = s.id;
+      place(hit, r, pages[r.page]);
+      ov.append(hit);
+    }
+  }
+  host.onclick = e => {
+    const hit = e.target.closest(".hit");
+    if (hit && isReadable(+hit.dataset.s)) jumpTo(+hit.dataset.s);
+  };
+}
+
+const clearMarks = sel => document.querySelectorAll(sel).forEach(el => el.remove());
+
+/** Draw the current sentence onto the page render; returns its first rect. */
+function paintSentence() {
+  clearMarks(".ov .sb");
+  let first = null;
+  for (const r of lineRuns(state.doc.sentences[state.sent]?.boxes)) {
+    const ov = state.ovs[r.page];
+    if (!ov) continue;
+    const el = document.createElement("div");
+    el.className = "sb";
+    place(el, r, state.doc.pages[r.page]);
+    ov.append(el);
+    first = first || el;
+  }
+  return first;
+}
+
+function paintWord(wi) {
+  clearMarks(".ov .wb");
+  const box = state.doc.sentences[state.sent]?.boxes?.[wi];
+  if (!box) return;
+  const [page, x0, y0, x1, y1] = box;
+  const ov = state.ovs[page];
+  if (!ov || !(x1 > x0 && y1 > y0)) return;
+  const el = document.createElement("div");
+  el.className = "wb";
+  place(el, { x0, y0, x1, y1 }, state.doc.pages[page]);
+  ov.append(el);
+}
+
+function applyView() {
+  const paged = !!state.doc?.pages?.length;
+  const original = paged && state.view === "original";
+  $("page").hidden = original;
+  $("sheets").hidden = !original;
+  $("view").hidden = !paged;
+  $("viewTxt").textContent = original ? "Original" : "Text";
+  $("prose").classList.toggle("dim", !state.readFurniture);
+  syncFurn();
+  markSentence();
 }
 
 /* ---------- playback ---------- */
@@ -335,7 +499,9 @@ async function fetchChunk(sentId) {
 
 async function playSentence(sentId) {
   if (!state.doc) return;
-  if (sentId >= state.doc.sentences.length) { stop(); return; }
+  const target = nextReadable(sentId, 1);   // step over skipped furniture
+  if (target < 0) { stop(); return; }
+  sentId = target;
   state.sent = sentId;
   markSentence();
   setPlayIcon("load");
@@ -354,7 +520,8 @@ async function playSentence(sentId) {
   state.playing = true;
   setPlayIcon("pause");
   savePosition();
-  fetchChunk(sentId + 1).catch(() => {}); // client-side warm; server prefetches deeper
+  const ahead = nextReadable(sentId + 1, 1);
+  if (ahead >= 0) fetchChunk(ahead).catch(() => {}); // warm; server prefetches deeper
   cancelAnimationFrame(state.raf);
   highlightLoop();
 }
@@ -370,10 +537,15 @@ function highlightLoop() {
   updateTime();
 }
 
-let lastWordEl = null;
+const onPages = () => state.view === "original" && !!state.doc?.pages?.length;
+
+let lastWordEl = null, lastWordKey = null;
 function setWord(wi) {
+  const key = state.sent + ":" + wi;
+  if (key === lastWordKey) return;
+  lastWordKey = key;
+  if (onPages()) { paintWord(wi); return; }
   const el = document.querySelector(`.w[data-s="${state.sent}"][data-w="${wi}"]`);
-  if (el === lastWordEl) return;
   lastWordEl?.classList.remove("now");
   el?.classList.add("now");
   lastWordEl = el;
@@ -381,16 +553,25 @@ function setWord(wi) {
 
 let lastSentEl = null;
 function markSentence() {
-  lastWordEl?.classList.remove("now"); lastWordEl = null;
-  lastSentEl?.classList.remove("now");
-  lastSentEl = $("s" + state.sent);
-  if (lastSentEl) {
-    lastSentEl.classList.add("now");
-    const r = lastSentEl.getBoundingClientRect(), reader = $("reader").getBoundingClientRect();
-    if (r.top < reader.top + 60 || r.bottom > reader.bottom - 190)
-      lastSentEl.scrollIntoView({ block: "center" });
+  if (!state.doc) return;
+  lastWordKey = null;
+  if (onPages()) {
+    clearMarks(".ov .wb");
+    scrollIfNeeded(paintSentence());
+  } else {
+    lastWordEl?.classList.remove("now"); lastWordEl = null;
+    lastSentEl?.classList.remove("now");
+    lastSentEl = $("s" + state.sent);
+    if (lastSentEl) { lastSentEl.classList.add("now"); scrollIfNeeded(lastSentEl); }
   }
   updateFill();
+}
+
+function scrollIfNeeded(el) {
+  if (!el) return;
+  const r = el.getBoundingClientRect(), reader = $("reader").getBoundingClientRect();
+  if (r.top < reader.top + 60 || r.bottom > reader.bottom - 190)
+    el.scrollIntoView({ block: "center" });
 }
 
 function jumpTo(sentId) { playSentence(sentId); }
@@ -429,6 +610,7 @@ function docTimes() {
   const n = state.doc.sentences.length;
   let before = 0, total = 0;
   for (let i = 0; i < n; i++) {
+    if (!isReadable(i)) continue;   // skipped furniture isn't part of the runtime
     const d = state.durations.get(i) ?? AVG;
     if (i < state.sent) before += d;
     total += d;
@@ -460,8 +642,32 @@ function savePosition() {
 
 /* ---------- controls ---------- */
 $("play").onclick = () => state.playing ? pause() : resume();
-$("prev").onclick = () => state.doc && playSentence(Math.max(0, state.sent - 1));
+$("prev").onclick = () => {
+  if (!state.doc) return;
+  const prev = nextReadable(state.sent - 1, -1);
+  if (prev >= 0) playSentence(prev);
+};
 $("next").onclick = () => state.doc && playSentence(state.sent + 1);
+$("view").onclick = () => {
+  state.view = PREF.view = state.view === "original" ? "text" : "original";
+  applyView();
+};
+$("furn").onclick = () => {
+  state.readFurniture = PREF.furniture = !state.readFurniture;
+  $("prose").classList.toggle("dim", !state.readFurniture);
+  syncFurn();
+  // Turning the toggle off can strand us on a sentence that's no longer read.
+  if (!isReadable(state.sent)) {
+    const next = nextReadable(state.sent, 1);
+    state.sent = next < 0 ? state.sent : next;
+  }
+  markSentence();
+  updateTime();
+};
+function syncFurn() {
+  $("furnTxt").textContent = state.readFurniture ? "Notes on" : "Notes off";
+  $("furn").setAttribute("aria-pressed", String(state.readFurniture));
+}
 $("speed").onclick = () => {
   state.speed = SPEEDS[(SPEEDS.indexOf(state.speed) + 1) % SPEEDS.length];
   $("speedTxt").textContent = state.speed + "x";
@@ -472,7 +678,8 @@ $("scrub").onclick = e => {
   if (!state.doc) return;
   const r = $("scrub").getBoundingClientRect();
   const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-  playSentence(Math.floor(frac * state.doc.sentences.length));
+  const ids = readableIds();
+  if (ids.length) playSentence(ids[Math.min(ids.length - 1, Math.floor(frac * ids.length))]);
 };
 $("voice").onchange = e => {
   state.voice = e.target.value;
@@ -524,6 +731,7 @@ $("uGo").onclick = () => imported(api("/api/documents/url", {
   const voices = await api("/api/voices");
   $("voice").innerHTML = voices.map(v => `<option value="${v.id}">${v.label}</option>`).join("");
   $("voice").value = state.voice;
+  syncFurn();
   await loadLibrary();
 })();
 </script>

@@ -68,9 +68,14 @@ def chunk_sentences(sentences: list[str]) -> list[str]:
     return chunks
 
 
+def tokenize(text: str) -> list[tuple[str, int, int]]:
+    """Whitespace-delimited tokens with their char offsets in `text`."""
+    return [(m.group(), m.start(), m.end()) for m in _WORD_RE.finditer(text)]
+
+
 def build_document(title: str, text: str) -> Document:
     doc = Document(title=title)
     for i, chunk in enumerate(chunk_sentences(split_sentences(text))):
-        words = [Word(m.group(), m.start(), m.end()) for m in _WORD_RE.finditer(chunk)]
+        words = [Word(t, s, e) for t, s, e in tokenize(chunk)]
         doc.sentences.append(Sentence(id=i, text=chunk, words=words))
     return doc
