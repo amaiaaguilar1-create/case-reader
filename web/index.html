@@ -75,6 +75,9 @@
   .sheet{
     position:relative; background:#fff; border:1px solid var(--line); border-radius:5px;
     box-shadow:0 3px 18px rgba(27,30,43,.13); overflow:hidden;
+    /* Keep the overlay's z-indexes local; without a stacking context here the
+       transparent hit regions escape and swallow clicks on the player bar. */
+    isolation:isolate;
   }
   .sheet img{display:block; width:100%; height:auto}
   .ov{position:absolute; inset:0}
@@ -102,6 +105,7 @@
     width:min(720px, calc(100% - 48px));
     background:#fff; border:1px solid var(--line); border-radius:22px; box-shadow:var(--shadow);
     padding:12px 18px 14px; display:none; flex-direction:column; gap:8px;
+    z-index:10;  /* always above the page render and its overlay */
   }
   .player.on{display:flex}
   .p-top{display:flex; align-items:center; gap:10px}
@@ -109,10 +113,12 @@
   .scrub .track{width:100%; height:4px; border-radius:2px; background:var(--line); overflow:hidden}
   .scrub .fill{height:100%; width:0%; background:var(--grad); border-radius:2px}
   .p-time{font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; min-width:72px; text-align:right}
-  .p-main{display:flex; align-items:center; justify-content:space-between; gap:12px}
-  .p-group{display:flex; align-items:center; gap:8px; flex:1}
+  /* Wrap rather than push controls past the bar's edge, which put the speed
+     chip out of reach on narrower windows. */
+  .p-main{display:flex; align-items:center; justify-content:space-between; gap:10px 12px; flex-wrap:wrap}
+  .p-group{display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0}
   .p-group.right{justify-content:flex-end}
-  .p-center{display:flex; align-items:center; gap:16px}
+  .p-center{display:flex; align-items:center; gap:16px; flex:0 0 auto; margin:0 auto}
   .icon-btn{width:38px; height:38px; border-radius:50%; display:grid; place-items:center; color:var(--ink); transition:background .12s}
   .icon-btn:hover{background:#f0f2fa}
   .play{
@@ -125,7 +131,9 @@
   .chip{
     border:1px solid var(--line); border-radius:999px; padding:7px 13px; font-weight:600;
     font-size:13px; display:flex; align-items:center; gap:6px; transition:background .12s;
+    white-space:nowrap; flex:0 0 auto;
   }
+  select.chip{min-width:0; max-width:132px; text-overflow:ellipsis}
   .chip:hover{background:#f0f2fa}
   .chip .dot{width:8px; height:8px; border-radius:50%; background:var(--grad)}
   select.chip{appearance:none; -webkit-appearance:none; padding-right:26px;
