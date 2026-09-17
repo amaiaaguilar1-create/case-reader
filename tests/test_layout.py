@@ -1,9 +1,9 @@
 """Layout extraction: furniture classification and word-box alignment."""
 import pytest
 
-from core.layout import (BODY, BOILERPLATE, FOOTNOTE, FURNITURE,
+from core.layout import (BODY, BOILERPLATE, FOOTNOTE, FURNITURE, LayoutWord,
                          build_layout_document, extract_layout, _is_tracked,
-                         _strip_superscripts, _words_from_chars)
+                         _run_text, _strip_superscripts, _words_from_chars)
 
 fitz = pytest.importorskip("fitz")
 
@@ -152,3 +152,67 @@ def test_furniture_never_merges_into_prose(sample_pdf):
     assert "From Beirut With Love" not in readable
     assert "A small note" not in readable
     assert "succession plan" in readable
+
+
+def _lw(text, *, y, block, line=0, page=0, x0=72.0, x1=540.0, h=12.0):
+    """One layout word; x1 is the line's right edge when it's the last word."""
+    return LayoutWord(text=text, page=page, bbox=(x0, y, x1, y + h),
+                      kind=BODY, block=block, line=line)
+
+
+def test_wrapped_lines_join_even_across_pdf_blocks():
+    """Print-to-PDF emits each visual line as its own block; that is not a paragraph."""
+    words = [
+        _lw("Each", y=100, block=0, x1=110),
+        _lw("summer", y=100, block=0, x1=160),
+        _lw("fortunes", y=100, block=0, x1=540),
+        _lw("gather", y=121, block=1, x1=130),
+        _lw("picnic.", y=121, block=1, x1=400),
+    ]
+    text = _run_text(words)
+    assert "\n\n" not in text
+    assert "fortunes gather" in text
+
+
+def test_paragraph_gap_still_splits():
+    """A real paragraph (extra leading) must not glue onto the line above."""
+    words = [
+        _lw("Short", y=100, block=0, x1=130),
+        _lw("line.", y=100, block=0, x1=200),
+        _lw("Next", y=144, block=1, x1=140),
+        _lw("paragraph.", y=144, block=1, x1=280),
+    ]
+    assert _run_text(words) == "Short line.\n\nNext paragraph."
+
+
+def test_title_spacing_does_not_glue_the_next_paragraph():
+    """A short title run has looser leading; that must not become the wrap rule."""
+    words = [
+        _lw("Cousin", y=128, block=0, x1=540),
+        _lw("Scathing", y=162, block=1, x1=540),
+    ]
+    assert _run_text(words, leading=21.0) == "Cousin\n\nScathing"
+
+
+def test_wrapped_sentence_is_one_spoken_chunk(tmp_path):
+    """A sentence split across two PDF lines must be one TTS chunk, not two."""
+    path = tmp_path / "wrap.pdf"
+    doc = fitz.open()
+    page = doc.new_page(width=PAGE_W, height=PAGE_H)
+    # Separate insert_text calls become separate blocks, matching WSJ-style PDFs.
+    page.insert_text((72, 120),
+                     "Each summer the heirs to one of America's biggest liquor fortunes")
+    page.insert_text((72, 141),
+                     "gather in the heart of bourbon country for a family picnic.")
+    page.insert_text((72, 185),
+                     "A later paragraph starts here after a real gap.")
+    doc.save(str(path))
+    doc.close()
+    built = build_layout_document("wrap", extract_layout(path))
+    body = [s.text for s in built.sentences if s.kind == BODY]
+    wrapped = [s for s in built.sentences if s.kind == BODY and "fortunes gather" in s.text]
+    assert wrapped, f"line wrap split the sentence: {body}"
+    assert any(s.text.endswith("picnic.") for s in wrapped)
+    assert any(s.text.startswith("A later paragraph") for s in built.sentences if s.kind == BODY)
+    for s in wrapped:
+        assert len(s.boxes) == len(s.words)

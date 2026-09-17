@@ -40,6 +40,11 @@ RUNNING_MIN_FRACTION = 0.3
 # of the test: endnotes and source lists start at the top of their own pages.
 FOOTNOTE_SIZE_DELTA = 0.6
 
+# Consecutive lines closer than this multiple of typical leading are a wrap,
+# not a paragraph. Tuned on HBS cases (~12pt wraps vs ~21pt paras) and
+# print-to-PDF articles (~21pt wraps vs ~33pt paras).
+WRAP_LEADING = 1.4
+
 # A line is "tracked" when this share of its tokens are lone letters, which is
 # how wide letter-spacing extracts. Display type, never prose -- and reading it
 # aloud would spell it out character by character.
@@ -260,18 +265,83 @@ def extract_layout(path: str | Path) -> PdfLayout:
     return PdfLayout(pages=geom, words=words)
 
 
-def _run_text(words: list[LayoutWord]) -> str:
-    """Join a run of words, keeping block breaks so sentences split sensibly."""
-    parts: list[str] = []
-    prev: tuple[int, int] | None = None
+def _line_bbox(line: list[LayoutWord]) -> tuple[float, float, float, float]:
+    return (
+        min(w.bbox[0] for w in line),
+        min(w.bbox[1] for w in line),
+        max(w.bbox[2] for w in line),
+        max(w.bbox[3] for w in line),
+    )
+
+
+def _group_lines(words: list[LayoutWord]) -> list[list[LayoutWord]]:
+    """Group a run into visual lines, in stream order."""
+    lines: list[list[LayoutWord]] = []
     for w in words:
-        here = (w.page, w.block)
-        if prev is not None and here != prev:
-            parts.append("\n\n")
-        elif parts:
-            parts.append(" ")
-        parts.append(w.text)
-        prev = here
+        key = (w.page, w.block, w.line)
+        if not lines or (lines[-1][0].page, lines[-1][0].block, lines[-1][0].line) != key:
+            lines.append([w])
+        else:
+            lines[-1].append(w)
+    return lines
+
+
+def _typical_leading(lines: list[list[LayoutWord]]) -> float:
+    """Median gap between stacked lines, ignoring paragraph-sized jumps."""
+    heights = [_line_bbox(ln)[3] - _line_bbox(ln)[1] for ln in lines]
+    median_h = sorted(heights)[len(heights) // 2] if heights else 12.0
+    gaps: list[float] = []
+    for a, b in zip(lines, lines[1:]):
+        if a[0].page != b[0].page:
+            continue
+        dy = _line_bbox(b)[1] - _line_bbox(a)[1]
+        if 1 < dy <= median_h * 2.2:
+            gaps.append(dy)
+    if gaps:
+        gaps.sort()
+        return gaps[len(gaps) // 2]
+    return max(median_h * 1.15, 1.0)
+
+
+def _wrapped(prev: list[LayoutWord], nxt: list[LayoutWord], leading: float) -> bool:
+    """True when nxt continues prev's paragraph rather than starting a new one.
+
+    Same PDF block is always a wrap (pymupdf already grouped the lines).
+    Different blocks still wrap when they're stacked at ordinary line spacing
+    -- print-to-PDF and many news articles emit each visual line as its own
+    block, and treating that as a paragraph made TTS pause at every wrap.
+    """
+    if prev[0].page == nxt[0].page and prev[0].block == nxt[0].block:
+        return True
+    if prev[0].page != nxt[0].page:
+        last = prev[-1].text.rstrip()
+        return bool(last) and last[-1] not in ".!?:;"
+    dy = _line_bbox(nxt)[1] - _line_bbox(prev)[1]
+    if dy <= 1:
+        return False  # side-by-side, not a line below
+    return dy <= leading * WRAP_LEADING
+
+
+def _run_text(words: list[LayoutWord], leading: float | None = None) -> str:
+    """Join a run of words, breaking only at real paragraph gaps.
+
+    Visual line wraps stay one sentence even when the PDF put each line in
+    its own block. A larger gap (or a page break after end punctuation) is
+    treated as a paragraph so headings and new sections still split.
+
+    `leading` is the document's typical body line spacing. Passing it in
+    keeps a short run (a title, a dek) from treating its own extra space
+    as the wrap interval and gluing onto the next paragraph.
+    """
+    lines = _group_lines(words)
+    if not lines:
+        return ""
+    if leading is None:
+        leading = _typical_leading(lines)
+    parts: list[str] = [" ".join(w.text for w in lines[0])]
+    for prev, nxt in zip(lines, lines[1:]):
+        parts.append(" " if _wrapped(prev, nxt, leading) else "\n\n")
+        parts.append(" ".join(w.text for w in nxt))
     return "".join(parts)
 
 
@@ -283,9 +353,11 @@ def build_layout_document(title: str, layout: PdfLayout) -> Document:
     a running header glue itself onto the first line of prose and get read.
     """
     doc = Document(title=title, pages=list(layout.pages))
+    body_lines = _group_lines([w for w in layout.words if w.kind == BODY])
+    leading = _typical_leading(body_lines)
     for run in _runs(layout.words):
         cursor = 0
-        for text in chunk_sentences(split_sentences(_run_text(run))):
+        for text in chunk_sentences(split_sentences(_run_text(run, leading))):
             toks = tokenize(text)
             boxes: list[tuple[int, float, float, float, float]] = []
             for tok, _, _ in toks:
