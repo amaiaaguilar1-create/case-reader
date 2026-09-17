@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,8 +46,11 @@ PRESETS: dict[str, VoicePreset] = {p.id: p for p in [
 DEFAULT_PRESET = "aria"
 
 
+PAD_MS = 25  # keep a hair of room so trims don't clip word endings
+
+
 def _postprocess(samples: np.ndarray, sr: int,
-                 thresh_db: float = -42.0, pad_ms: int = 60) -> np.ndarray:
+                 thresh_db: float = -42.0, pad_ms: int = PAD_MS) -> np.ndarray:
     """De-click, normalize, and trim silence.
 
     The int8 Kokoro model occasionally emits 1-2 sample transients hundreds of
@@ -85,15 +87,7 @@ class SynthesisResult:
     word_timings: list[tuple[float, float]]
 
 
-class TTSEngine(ABC):
-    @abstractmethod
-    def presets(self) -> list[VoicePreset]: ...
-
-    @abstractmethod
-    def synthesize(self, text: str, words: list[Word], preset_id: str) -> SynthesisResult: ...
-
-
-class KokoroEngine(TTSEngine):
+class KokoroEngine:
     def __init__(self, model_path: str, voices_path: str, cache_dir: str = "cache"):
         from kokoro_onnx import Kokoro
         self._k = Kokoro(model_path, voices_path)
@@ -114,9 +108,6 @@ class KokoroEngine(TTSEngine):
     def cache_path(self, text: str, preset_id: str) -> Path:
         h = hashlib.sha256(f"kokoro|{preset_id}|{text}".encode()).hexdigest()[:24]
         return self._cache / f"{h}.wav"
-
-    def is_cached(self, text: str, preset_id: str) -> bool:
-        return self.cache_path(speakable(text), preset_id).exists()
 
     def synthesize(self, text: str, words: list[Word], preset_id: str) -> SynthesisResult:
         preset = PRESETS.get(preset_id) or PRESETS[DEFAULT_PRESET]

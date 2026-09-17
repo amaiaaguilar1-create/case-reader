@@ -39,7 +39,7 @@ def test_dotted_acronyms_lose_the_pauses():
 
 def test_state_codes_after_a_city():
     out = speakable("LOUISVILLE, Ky.—Each summer")
-    assert out.startswith("LOUISVILLE, Kentucky—")
+    assert out.startswith("LOUISVILLE, Kentucky")
     assert "Ky" not in out
     assert speakable("Boston, MA 02163") == "Boston, Massachusetts 02163"
     # ", In 1978" is a preposition, not Indiana.
@@ -50,3 +50,38 @@ def test_does_not_rewrite_non_years_or_display_noise():
     assert speakable("about 1,500 employees") == "about 1,500 employees"
     assert "dollar" not in speakable("founded in 1978.")
     assert speakable("") == ""
+
+
+def test_punctuation_does_not_break_the_line():
+    out = speakable("Kentucky—Each summer")
+    assert "—" not in out
+    assert "Kentucky, Each" in out
+    assert speakable("Holding (FHH) was") == "Holding, FHH, was"
+    assert "…" not in speakable("independence… we’ll be better")
+
+
+def test_roman_after_a_name_is_an_ordinal():
+    assert speakable("Owsley Brown II, his uncle") == (
+        "Owsley Brown the second, his uncle"
+    )
+    assert speakable("Lyons Brown III and his brother") == (
+        "Lyons Brown the third and his brother"
+    )
+    assert speakable("George Garvin Brown IV, a former chairman") == (
+        "George Garvin Brown the fourth, a former chairman"
+    )
+    assert speakable("Queen Elizabeth II opened") == (
+        "Queen Elizabeth the second opened"
+    )
+
+
+def test_roman_after_a_common_noun_is_a_cardinal():
+    assert speakable("World War II ended") == "World War two ended"
+    assert speakable("World War I began") == "World War one began"
+    assert speakable("Chapter II introduces") == "Chapter two introduces"
+    assert speakable("Type II diabetes") == "Type two diabetes"
+
+
+def test_roman_does_not_eat_the_pronoun_I():
+    assert speakable("And I have experience.") == "And I have experience."
+    assert speakable("But I also need people") == "But I also need people"

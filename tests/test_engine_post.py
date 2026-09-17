@@ -1,5 +1,5 @@
 import numpy as np
-from engines.kokoro_engine import _postprocess
+from engines.kokoro_engine import PAD_MS, _postprocess
 
 SR = 24000
 
@@ -7,7 +7,7 @@ def test_speech_kept_and_padded():
     sig = np.zeros(SR * 3, dtype=np.float32)
     sig[SR:2*SR] = 0.5
     out = _postprocess(sig, SR)
-    assert SR <= out.size <= SR + 2 * int(SR * 0.06) + 2
+    assert SR <= out.size <= SR + 2 * int(SR * PAD_MS / 1000) + 2
 
 def test_transient_spike_does_not_destroy_trim():
     # regression: int8 model emits huge 1-sample spikes (observed peak 337)

@@ -133,11 +133,13 @@
     font-size:13px; display:flex; align-items:center; gap:6px; transition:background .12s;
     white-space:nowrap; flex:0 0 auto;
   }
-  select.chip{min-width:0; max-width:132px; text-overflow:ellipsis}
+  select.chip{
+    appearance:none; -webkit-appearance:none; min-width:0; max-width:132px;
+    padding-right:26px; text-overflow:ellipsis;
+    background:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6"><path d="M1 1l4 4 4-4" stroke="%236e7385" fill="none" stroke-width="1.5"/></svg>') no-repeat right 11px center;
+  }
   .chip:hover{background:#f0f2fa}
   .chip .dot{width:8px; height:8px; border-radius:50%; background:var(--grad)}
-  select.chip{appearance:none; -webkit-appearance:none; padding-right:26px;
-    background:url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="10" height="6"><path d="M1 1l4 4 4-4" stroke="%236e7385" fill="none" stroke-width="1.5"/></svg>') no-repeat right 11px center}
   .spin{width:16px; height:16px; border:2px solid rgba(255,255,255,.4); border-top-color:#fff; border-radius:50%;
     animation:sp .7s linear infinite}
   @keyframes sp{to{transform:rotate(360deg)}}
@@ -289,7 +291,7 @@ const PREF = {
 };
 const state = {
   doc: null, sent: 0, playing: false, speed: 1, voice: "aria",
-  audio: null, timings: [], chunkCache: new Map(), durations: new Map(), raf: 0,
+  audio: null, timings: [], pack: [], tIdx: 0, chunkCache: new Map(), durations: new Map(), raf: 0,
   // "original" paints highlights onto rendered PDF pages; "text" reflows prose.
   view: PREF.view, readFurniture: PREF.furniture, ovs: [],
 };
@@ -500,7 +502,16 @@ async function fetchChunk(sentId) {
   const key = `${sentId}|${state.voice}`;
   if (!state.chunkCache.has(key)) {
     state.chunkCache.set(key, api(`/api/chunk/${state.doc.id}/${sentId}?voice=${state.voice}`)
-      .then(c => { state.durations.set(sentId, c.duration); return c; }));
+      .then(c => {
+        c.parts = c.parts || [{id: sentId, words: (c.timings || []).length}];
+        c.through = c.parts[c.parts.length - 1].id;
+        state.durations.set(c.parts[0].id, c.duration);
+        for (const p of c.parts.slice(1)) state.durations.set(p.id, 0);
+        const el = new Audio(c.audio);
+        el.preload = "auto";
+        c.el = el;
+        return c;
+      }));
   }
   return state.chunkCache.get(key);
 }
@@ -510,28 +521,43 @@ async function playSentence(sentId) {
   const target = nextReadable(sentId, 1);   // step over skipped furniture
   if (target < 0) { stop(); return; }
   sentId = target;
+  if (state.audio) { state.audio.onended = null; state.audio.pause(); }
+  cancelAnimationFrame(state.raf);
   state.sent = sentId;
   markSentence();
-  setPlayIcon("load");
+  if (!state.playing) setPlayIcon("load");
   let chunk;
   try { chunk = await fetchChunk(sentId); }
   catch (e) { toast("Playback failed: " + e.message); stop(); return; }
   if (state.sent !== sentId) return; // user seeked while loading
   state.timings = chunk.timings;
-  if (state.audio) { state.audio.onended = null; state.audio.pause(); }
-  const a = new Audio(chunk.audio);
+  state.pack = chunk.parts;
+  state.tIdx = 0;
+  const a = chunk.el || new Audio(chunk.audio);
+  a.currentTime = 0;
   a.playbackRate = state.speed;
   if ("preservesPitch" in a) a.preservesPitch = true;
   state.audio = a;
-  a.onended = () => playSentence(sentId + 1);
+  const ahead = nextReadable(chunk.through + 1, 1);
+  a.onended = () => playSentence(ahead);
   try { await a.play(); } catch { stop(); return; }
   state.playing = true;
   setPlayIcon("pause");
   savePosition();
-  const ahead = nextReadable(sentId + 1, 1);
-  if (ahead >= 0) fetchChunk(ahead).catch(() => {}); // warm; server prefetches deeper
-  cancelAnimationFrame(state.raf);
+  if (ahead >= 0) fetchChunk(ahead).catch(() => {});
   highlightLoop();
+}
+
+function locatePacked(idx) {
+  const parts = state.pack && state.pack.length
+    ? state.pack : [{id: state.sent, words: state.timings.length}];
+  let off = 0;
+  for (const p of parts) {
+    if (idx < off + p.words) return [p.id, idx - off];
+    off += p.words;
+  }
+  const last = parts[parts.length - 1];
+  return [last.id, Math.max(0, last.words - 1)];
 }
 
 function highlightLoop() {
@@ -539,9 +565,15 @@ function highlightLoop() {
   const a = state.audio;
   if (!a || a.paused) return;
   const t = a.currentTime;
-  let idx = state.timings.findIndex(([s, e]) => t >= s && t < e);
-  if (idx === -1) idx = t >= (state.timings.at(-1)?.[1] ?? 0) ? state.timings.length - 1 : 0;
-  setWord(idx);
+  const times = state.timings;
+  if (!times.length) return;
+  let i = state.tIdx;
+  while (i < times.length - 1 && t >= times[i][1]) i++;
+  while (i > 0 && t < times[i][0]) i--;
+  state.tIdx = i;
+  const [sent, local] = locatePacked(i);
+  if (sent !== state.sent) { state.sent = sent; markSentence(); }
+  setWord(local);
   updateTime();
 }
 
@@ -572,7 +604,7 @@ function markSentence() {
     lastSentEl = $("s" + state.sent);
     if (lastSentEl) { lastSentEl.classList.add("now"); scrollIfNeeded(lastSentEl); }
   }
-  updateFill();
+  updateTime();
 }
 
 function scrollIfNeeded(el) {
@@ -631,11 +663,6 @@ function updateTime() {
   if (!state.doc) return;
   const [cur, total] = docTimes();
   $("time").textContent = `${fmt(cur)} / ${fmt(total)}`;
-  updateFill();
-}
-function updateFill() {
-  if (!state.doc) return;
-  const [cur, total] = docTimes();
   $("fill").style.width = (total ? 100 * cur / total : 0) + "%";
 }
 let saveT = 0;

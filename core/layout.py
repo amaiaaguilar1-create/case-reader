@@ -1,7 +1,6 @@
 """PDF extraction that keeps page coordinates and separates prose from furniture.
 
-parsers.parse_pdf throws layout away, which is fine for reflowed reading but
-loses the page. This module keeps two extra things per word:
+Each word carries:
 
 - where it sits on the page, so the reader can highlight the real PDF render
 - whether it's prose or page furniture (running heads, page numbers,

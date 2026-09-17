@@ -8,8 +8,11 @@ from __future__ import annotations
 import re
 from .model import Document, Sentence, Word
 
-MIN_CHARS = 25
-MAX_CHARS = 280
+MIN_CHARS = 40
+MAX_CHARS = 480
+#: Enough following sentences to fill MAX_CHARS without loading the rest of
+#: the document on every synthesis request.
+PACK_LOOKAHEAD = 16
 
 # Sentence splitter: end punctuation followed by space+capital/quote/digit, or newline blocks.
 _SENT_RE = re.compile(r'(?<=[.!?])["\')\]]*\s+(?=["\'(\[]?[A-Z0-9])')
@@ -66,6 +69,29 @@ def chunk_sentences(sentences: list[str]) -> list[str]:
         else:
             chunks.append(s)
     return chunks
+
+
+def pack_for_speech(items: list[tuple[int, str, str]], limit: int = MAX_CHARS) -> list[int]:
+    """Ids of following same-kind sentences to speak as one clip.
+
+    `items` is `(id, kind, text)` starting at the sentence the reader asked
+    for. Each Kokoro call is its own intonation contour, so packing a short
+    paragraph into one call is what keeps the voice flowing.
+    """
+    if not items:
+        return []
+    sid0, kind0, text0 = items[0]
+    packed = [sid0]
+    size = len(text0)
+    for sid, kind, text in items[1:]:
+        if kind != kind0:
+            break
+        nxt = size + 1 + len(text)
+        if nxt > limit:
+            break
+        packed.append(sid)
+        size = nxt
+    return packed
 
 
 def tokenize(text: str) -> list[tuple[str, int, int]]:

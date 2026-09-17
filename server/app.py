@@ -20,8 +20,8 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from core.chunker import build_document
-from core.model import Document
+from core.chunker import PACK_LOOKAHEAD, build_document, pack_for_speech
+from core.model import Document, Word
 from core.parsers import PARSERS, ScannedPDFError
 from engines.kokoro_engine import DEFAULT_PRESET, KokoroEngine
 
@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DB = ROOT / "localspeech.db"
 LIBRARY = ROOT / "library"          # originals, kept so pages can be re-rendered
 PAGE_CACHE = ROOT / "cache" / "pages"
-PREFETCH_AHEAD = 3
+PREFETCH_AHEAD = 1               # next pack; more than that re-synthesizes overlapping windows
 RENDER_SCALE = 2.0                  # 2x keeps page text crisp on retina displays
 
 app = FastAPI(title="LocalSpeech")
@@ -244,20 +244,28 @@ def voices():
     return [{"id": p.id, "label": p.label} for p in engine.presets()]
 
 
-def _sentence(doc_id: int, sent_id: int) -> sqlite3.Row:
-    with db() as c:
-        row = c.execute("SELECT text, words FROM sentences WHERE doc_id=? AND sent_id=?",
-                        (doc_id, sent_id)).fetchone()
-    if not row:
-        raise HTTPException(404, "Chunk not found")
-    return row
-
-
 def _synth(doc_id: int, sent_id: int, voice: str):
-    from core.model import Word
-    row = _sentence(doc_id, sent_id)
-    words = [Word(t, s, e) for t, s, e in json.loads(row["words"])]
-    return engine.synthesize(row["text"], words, voice)
+    with db() as c:
+        rows = c.execute(
+            "SELECT sent_id, kind, text, words FROM sentences "
+            "WHERE doc_id=? AND sent_id>=? ORDER BY sent_id LIMIT ?",
+            (doc_id, sent_id, PACK_LOOKAHEAD)).fetchall()
+    if not rows or rows[0]["sent_id"] != sent_id:
+        raise HTTPException(404, "Chunk not found")
+    packed = pack_for_speech(
+        [(r["sent_id"], r["kind"], r["text"]) for r in rows])
+    by_id = {r["sent_id"]: r for r in rows}
+    texts: list[str] = []
+    words: list[Word] = []
+    parts: list[dict] = []
+    for sid in packed:
+        r = by_id[sid]
+        w = [Word(t, s, e) for t, s, e in json.loads(r["words"])]
+        texts.append(r["text"])
+        words.extend(w)
+        parts.append({"id": sid, "words": len(w)})
+    result = engine.synthesize(" ".join(texts), words, voice)
+    return result, parts
 
 
 def _prefetch_one(doc_id: int, sent_id: int, voice: str) -> None:
@@ -274,9 +282,10 @@ def _prefetch_one(doc_id: int, sent_id: int, voice: str) -> None:
 @app.get("/api/chunk/{doc_id}/{sent_id}")
 def get_chunk(doc_id: int, sent_id: int, voice: str = DEFAULT_PRESET):
     assert engine
-    result = _synth(doc_id, sent_id, voice)
+    result, parts = _synth(doc_id, sent_id, voice)
+    through = parts[-1]["id"]
     for ahead in range(1, PREFETCH_AHEAD + 1):
-        key = (doc_id, sent_id + ahead, voice)
+        key = (doc_id, through + ahead, voice)
         with _inflight_lock:
             if key in _inflight:
                 continue
@@ -284,7 +293,8 @@ def get_chunk(doc_id: int, sent_id: int, voice: str = DEFAULT_PRESET):
         _prefetch.submit(_prefetch_one, *key)
     return {"audio": f"/api/audio/{result.wav_path.name}",
             "duration": result.duration,
-            "timings": result.word_timings}
+            "timings": result.word_timings,
+            "parts": parts}
 
 
 @app.get("/api/audio/{name}")

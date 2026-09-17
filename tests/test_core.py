@@ -1,5 +1,5 @@
 import pytest
-from core.chunker import split_sentences, chunk_sentences, build_document, MAX_CHARS, MIN_CHARS
+from core.chunker import split_sentences, chunk_sentences, build_document, pack_for_speech, MAX_CHARS
 from core.timing import estimate_word_timings
 from core.model import Word
 
@@ -24,6 +24,30 @@ def test_long_sentence_is_split():
 def test_short_sentences_merge():
     chunks = chunk_sentences(["Hi.", "Ok.", "Sure thing."])
     assert len(chunks) == 1
+
+
+def test_pack_for_speech_keeps_a_paragraph_together():
+    items = [
+        (5, "body", "The Group comprised over 30 companies located in eight countries."),
+        (6, "body", "Its flagship entity was a leader in hygienic paper products."),
+        (7, "header", "624-030"),
+    ]
+    packed = pack_for_speech(items)
+    assert packed == [5, 6]
+
+
+def test_pack_for_speech_stops_at_kind_change():
+    items = [
+        (1, "body", "Hello there, this is a short line."),
+        (2, "footnote", "See exhibit 1."),
+    ]
+    assert pack_for_speech(items) == [1]
+
+
+def test_pack_for_speech_respects_the_length_cap():
+    long = "Word " * 80 + "end."
+    items = [(1, "body", long), (2, "body", long)]
+    assert pack_for_speech(items) == [1]
 
 def test_no_content_lost():
     text = "One two three. Four five six seven eight nine ten! Short. " * 5

@@ -60,11 +60,11 @@ Things worth knowing:
 
 - core/       parsing (PDF/EPUB/DOCX/TXT/MD), sentence chunking, word-timing
               estimation. Pure functions, fully unit-tested.
-- engines/    TTSEngine interface + Kokoro ONNX engine with curated voice
-              presets (warm blends), de-click/normalize/trim postprocessing,
-              and a content-addressed disk cache.
+- engines/    Kokoro ONNX engine with curated voice presets (warm blends),
+              de-click/normalize/trim postprocessing, and a content-addressed
+              disk cache.
 - server/     FastAPI app: SQLite library, imports, chunk synthesis with a
-              background prefetch queue (3 chunks ahead), audio serving.
+              background prefetch of the next spoken pack, audio serving.
 - web/        single-file frontend, no build step. Speechify-style reader:
               library rail, serif reading view, follow-along word highlight,
               click-to-seek, floating player with speed 0.75-3x
