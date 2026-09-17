@@ -20,6 +20,7 @@ import numpy as np
 import soundfile as sf
 
 from core.model import Word
+from core.speak import speakable
 from core.timing import estimate_word_timings
 
 
@@ -115,11 +116,12 @@ class KokoroEngine(TTSEngine):
         return self._cache / f"{h}.wav"
 
     def is_cached(self, text: str, preset_id: str) -> bool:
-        return self.cache_path(text, preset_id).exists()
+        return self.cache_path(speakable(text), preset_id).exists()
 
     def synthesize(self, text: str, words: list[Word], preset_id: str) -> SynthesisResult:
         preset = PRESETS.get(preset_id) or PRESETS[DEFAULT_PRESET]
-        wav = self.cache_path(text, preset.id)
+        spoken = speakable(text)
+        wav = self.cache_path(spoken, preset.id)
         if wav.exists():
             info = sf.info(str(wav))
             duration, sr = info.duration, info.samplerate
@@ -128,7 +130,7 @@ class KokoroEngine(TTSEngine):
                 # trim=False: kokoro-onnx's trimmer squares float16 energy,
                 # overflows to inf on blended styles, and can trim the entire
                 # clip to zero samples (reproduced in-sandbox). We trim ourselves.
-                samples, sr = self._k.create(text, voice=self._style(preset),
+                samples, sr = self._k.create(spoken, voice=self._style(preset),
                                              speed=preset.base_speed, trim=False)
             samples = _postprocess(np.asarray(samples, dtype=np.float32), sr)
             tmp = wav.with_suffix(".tmp.wav")
