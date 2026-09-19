@@ -1,11 +1,37 @@
 # Case Reader
 
-A Speechify-style listening app that runs entirely on your own computer.
-Import PDFs, EPUBs, Word files, articles, or pasted text; press play; the
-words highlight as a warm natural voice reads to you. Nothing leaves the
-machine and it works with Wi-Fi off after the first model download.
+A Speechify-style listening app. Add a PDF or paste text; press play; a
+warm voice reads along and highlights the words. The voice and your files
+live on the device that is listening — nothing is uploaded.
 
-## Run it
+## Share it (free website)
+
+This is the copy you send a friend or a sibling. They open a link, follow
+three plain screens, and listen. No install, no account.
+
+**1. Turn on GitHub Pages once** (you). Repo **Settings → Pages → Source:
+GitHub Actions**. Then run the **GitHub Pages** workflow, or merge to
+`main`. Your site will be:
+
+    https://amaiaaguilar1-create.github.io/case-reader/
+
+**2. They open the link.** Three screens:
+
+1. *Listen to what you read.* → Continue
+2. *Save the voice on this device.* About a minute, once. Then it works
+   offline.
+3. *Add something to hear.* A short sample, a PDF, or pasted text.
+
+After that it is just the reader. Each phone or computer has its own
+library — add the file again on a second device.
+
+To try it on your computer before Pages is live:
+
+    cd site
+    npm install
+    npm run dev
+
+## Run the original Mac app
 
     ./run.sh
 
@@ -17,11 +43,11 @@ Needs Python 3.10+ (onnxruntime has no 3.9 wheels; macOS still ships 3.9).
 `brew install python@3.12`, or point setup at a specific interpreter with
 `PYTHON=/path/to/python3.12 ./run.sh`.
 
-## Run it on the web (free)
+## Run the Python app in Codespaces
 
-The app needs a real Python process and ~340MB of model on disk, so it can't
-go on a static host like GitHub Pages. GitHub Codespaces gives you a free
-computer in the cloud that runs it as-is. Nothing to install.
+The original `./run.sh` app (EPUB, Word, article links, original-page view)
+still needs a Python process. Codespaces runs that for free. For sharing
+with someone who is not technical, use the static site at the top instead.
 
 **1. Start the computer.** On the repo page, click the green **Code** button
 -> **Codespaces** tab -> **Create codespace on main**. A code editor opens in
@@ -65,6 +91,8 @@ Things worth knowing:
               disk cache.
 - server/     FastAPI app: SQLite library, imports, chunk synthesis with a
               background prefetch of the next spoken pack, audio serving.
+- site/       static Case Reader: in-browser Kokoro, IndexedDB library,
+              three-screen onboarding. This is what GitHub Pages serves.
 - web/        single-file frontend, no build step. Speechify-style reader:
               library rail, serif reading view, follow-along word highlight,
               click-to-seek, floating player with speed 0.75-3x
@@ -89,7 +117,8 @@ Things worth knowing:
 
 ## Tests
 
-    ./.venv/bin/pytest tests/ -q      # 20 tests: chunker, timing, parsers,
+    ./.venv/bin/pytest tests/ -q
+    cd site && npm test      # 20 tests: chunker, timing, parsers,
                                       # postprocessing regressions
 
 ## Samples

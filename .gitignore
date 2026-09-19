@@ -17,3 +17,5 @@ library/
 
 .DS_Store
 .pytest_cache/
+site/node_modules/
+site/dist/

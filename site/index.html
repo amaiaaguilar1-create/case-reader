@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f5f4f1">
+  <meta name="description" content="Listen to what you read. Documents stay on this device.">
+  <title>Case Reader</title>
+  <link rel="stylesheet" href="./src/styles.css">
+</head>
+<body>
+  <div id="onboard" class="onboard" hidden>
+    <div class="onboard-card" data-step="hello">
+      <div class="mark" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+      </div>
+      <h1>Listen to what you read.</h1>
+      <p>Add a document. Press play. A warm voice follows along, word by word.</p>
+      <button class="btn" id="helloGo" type="button">Continue</button>
+    </div>
+
+    <div class="onboard-card" data-step="voice" hidden>
+      <h1>Save the voice on this device.</h1>
+      <p>This takes about a minute, once. After that it works without Wi‑Fi. Your files never leave this phone or computer.</p>
+      <div class="progress" id="voiceProg" hidden>
+        <div class="progress-track"><i id="voiceFill"></i></div>
+        <p class="progress-label" id="voiceLabel">Getting the voice ready…</p>
+      </div>
+      <button class="btn" id="voiceGo" type="button">Save the voice</button>
+      <p class="fine" id="voiceErr" hidden></p>
+    </div>
+
+    <div class="onboard-card" data-step="add" hidden>
+      <h1>Add something to hear.</h1>
+      <p>A PDF works. Or paste any text. You can always add more later.</p>
+      <button class="btn" id="sampleGo" type="button">Play a short sample</button>
+      <button class="btn ghost" id="pdfGo" type="button">Add a PDF</button>
+      <button class="btn ghost" id="pasteGo" type="button">Paste text</button>
+      <input id="onboardFile" type="file" accept=".pdf,.txt,.md,application/pdf,text/plain" hidden>
+    </div>
+  </div>
+
+  <div id="app" class="app" hidden>
+    <aside class="rail" id="rail">
+      <div class="logo">
+        <span class="mark sm" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+        </span>
+        Case Reader
+      </div>
+      <button class="btn add" id="addBtn" type="button">Add to library</button>
+      <nav class="lib" id="lib" aria-label="Your library"></nav>
+      <p class="fine rail-note">Saved only on this device.</p>
+    </aside>
+
+    <main>
+      <header class="top">
+        <button class="text-btn" id="menuBtn" type="button">Library</button>
+        <span class="top-title" id="topTitle">Case Reader</span>
+      </header>
+      <div class="reader" id="reader">
+        <div class="hero" id="hero">
+          <div class="mark" aria-hidden="true">
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
+          </div>
+          <h2>Your library is empty</h2>
+          <p>Add a PDF or paste text. Everything stays on this device.</p>
+          <button class="btn" id="heroAdd" type="button">Add something</button>
+        </div>
+        <article class="page" id="page" hidden>
+          <h1 id="docTitle"></h1>
+          <div class="prose" id="prose"></div>
+        </article>
+      </div>
+
+      <div class="player" id="player">
+        <div class="p-top">
+          <div class="scrub" id="scrub" role="slider" aria-label="Progress" tabindex="0">
+            <div class="track"><i id="fill"></i></div>
+          </div>
+          <div class="p-time" id="time">0:00 / 0:00</div>
+        </div>
+        <div class="p-main">
+          <select class="chip" id="voice" aria-label="Voice"></select>
+          <div class="p-center">
+            <button class="icon-btn" id="prev" type="button" aria-label="Previous">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6L18 6v12l-8.5-6z"/></svg>
+            </button>
+            <button class="play" id="play" type="button" aria-label="Play">
+              <span id="playIcon"></span>
+            </button>
+            <button class="icon-btn" id="next" type="button" aria-label="Next">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zM6 18V6l8.5 6L6 18z"/></svg>
+            </button>
+          </div>
+          <button class="chip" id="speed" type="button" aria-label="Speed"><span id="speedTxt">1x</span></button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="addDlg">
+    <div class="dlg">
+      <h3>Add to library</h3>
+      <button class="btn" id="addPdf" type="button">Add a PDF</button>
+      <button class="btn ghost" id="addPaste" type="button">Paste text</button>
+      <button class="text-btn" id="addCancel" type="button">Cancel</button>
+    </div>
+  </dialog>
+
+  <dialog id="dlg">
+    <form class="dlg" id="pasteForm">
+      <h3>Paste text</h3>
+      <input class="field" id="pTitle" placeholder="Title" autocomplete="off">
+      <textarea class="field" id="pText" placeholder="Paste anything you want to hear"></textarea>
+      <button class="btn" type="submit">Add</button>
+      <button class="text-btn" id="dlgClose" type="button">Cancel</button>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status"></div>
+  <div class="banner" id="banner" hidden>Getting the voice ready…</div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
