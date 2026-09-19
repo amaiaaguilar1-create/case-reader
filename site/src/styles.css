@@ -69,8 +69,8 @@ button:focus-visible, [tabindex]:focus-visible {
 .onboard-card { width: min(420px, 100%); }
 .onboard-card h1 {
   font-size: clamp(32px, 8vw, 42px);
-  line-height: 1.12; letter-spacing: -0.035em;
-  font-weight: 650; margin: 28px 0 12px;
+  line-height: 1.15; letter-spacing: -0.02em;
+  font-weight: 600; margin: 28px 0 12px;
 }
 .onboard-card p {
   color: var(--muted); font-size: 18px; line-height: 1.45;
