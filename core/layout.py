@@ -40,8 +40,8 @@ RUNNING_MIN_FRACTION = 0.3
 FOOTNOTE_SIZE_DELTA = 0.6
 
 # Consecutive lines closer than this multiple of typical leading are a wrap,
-# not a paragraph. Tuned on HBS cases (~12pt wraps vs ~21pt paras) and
-# print-to-PDF articles (~21pt wraps vs ~33pt paras).
+# not a paragraph. Tuned on two-column teaching PDFs (~12pt wraps vs ~21pt
+# paras) and print-to-PDF articles (~21pt wraps vs ~33pt paras).
 WRAP_LEADING = 1.4
 
 # A line is "tracked" when this share of its tokens are lone letters, which is
@@ -54,10 +54,15 @@ TRACKED_MIN_LETTERS = 2
 ORDINAL_SUFFIXES = frozenset({"st", "nd", "rd", "th"})
 
 _PAGE_LABEL_RE = re.compile(r"^(page\s*)?[\divxlc]+(\s*(of|/)\s*\d+)?$", re.I)
+#: Publishers stamp a document number on the title page, e.g. "4-512-078".
 _CASE_ID_RE = re.compile(r"^\d-\d{3}-\d{3}$")
 # Matched against the line with whitespace removed, so letter-spaced title
-# blocks ("9-619-024 R E V : ...") still register as the case number line.
+# blocks ("4-512-078 R E V : ...") still register as the number line.
 _CASE_ID_PREFIX_RE = re.compile(r"^\d-\d{3}-\d{3}")
+# Publisher boilerplate: the licensing and permissions block that repeats on
+# every page. It is furniture, not prose, so it is skipped rather than read
+# aloud -- including the per-reader watermark, which carries someone's name.
+# These are matched, never removed from the file; the PDF is untouched.
 _BOILERPLATE_RES = tuple(re.compile(p, re.I) for p in (
     r"copyright\s*\u00a9",
     r"all rights reserved",
