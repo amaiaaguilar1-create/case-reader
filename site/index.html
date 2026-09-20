@@ -5,11 +5,36 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f5f4f1">
   <meta name="description" content="Listen to what you read. Documents stay on this device.">
+  <meta name="robots" content="noindex, nofollow">
   <title>Case Reader</title>
   <link rel="stylesheet" href="./src/styles.css">
+  <script>
+    // Choose the first screen before anything paints. The real check happens
+    // in gate.js; this only avoids showing a returning reader the lock screen.
+    try {
+      document.documentElement.dataset.first =
+        localStorage.getItem("caseReader.unlocked") ? "onboard" : "gate";
+    } catch (e) {
+      document.documentElement.dataset.first = "gate";
+    }
+  </script>
 </head>
 <body>
-  <div id="onboard" class="onboard">
+  <div id="gate" class="onboard" hidden>
+    <form class="onboard-card" id="gateForm">
+      <div class="mark" aria-hidden="true">
+        <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm0 2a3 3 0 0 1 3 3v3H9V6a3 3 0 0 1 3-3zm0 11a2 2 0 0 1 1 3.7V19a1 1 0 0 1-2 0v-1.3A2 2 0 0 1 12 14z"/></svg>
+      </div>
+      <h1>Case Reader</h1>
+      <p>This link is private. Enter the password to open it. You only do this once on each phone or computer.</p>
+      <input class="field" id="gatePw" type="password" autocomplete="current-password"
+             placeholder="Password" aria-label="Password" spellcheck="false">
+      <button class="btn" id="gateGo" type="submit">Open</button>
+      <p class="fine" id="gateErr" hidden></p>
+    </form>
+  </div>
+
+  <div id="onboard" class="onboard" hidden>
     <div class="onboard-card" data-step="hello">
       <div class="mark" aria-hidden="true">
         <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>

@@ -6,6 +6,7 @@ import {
 import {
   DEFAULT_VOICE, VOICES, loadVoice, packFrom, synthesize, voiceReady,
 } from "./lib/tts.js";
+import { remember, unlocked, verify } from "./lib/gate.js";
 
 const $ = id => document.getElementById(id);
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
@@ -412,7 +413,7 @@ $("voice").innerHTML = VOICES.map(v => `<option value="${v.id}">${v.label}</opti
 $("voice").value = state.voice;
 setPlayIcon("play");
 
-(async () => {
+async function boot() {
   const onboarded = await metaGet("onboarded");
   const voiceSaved = await metaGet("voiceSaved");
   if (!onboarded) {
@@ -428,4 +429,46 @@ setPlayIcon("play");
   } else {
     loadVoice().catch(() => {});
   }
-})();
+}
+
+$("gateForm").onsubmit = async e => {
+  e.preventDefault();
+  const btn = $("gateGo"), err = $("gateErr"), field = $("gatePw");
+  err.hidden = true;
+  btn.disabled = true;
+  btn.textContent = "Checking\u2026";
+  let ok = false;
+  try {
+    ok = await verify(field.value);
+  } catch (e2) {
+    err.textContent = e2.message;
+    err.hidden = false;
+  }
+  btn.disabled = false;
+  btn.textContent = "Open";
+  if (!ok) {
+    if (err.hidden) {
+      err.textContent = "That password doesn\u2019t match. Check the message it came in.";
+      err.hidden = false;
+    }
+    field.select();
+    return;
+  }
+  remember();
+  field.value = "";
+  $("gate").hidden = true;
+  $("onboard").hidden = false;
+  boot();
+};
+
+// The head script guessed which screen to show; from here [hidden] decides.
+delete document.documentElement.dataset.first;
+if (unlocked()) {
+  $("gate").hidden = true;
+  $("onboard").hidden = false;
+  boot();
+} else {
+  $("onboard").hidden = true;
+  $("gate").hidden = false;
+  $("gatePw").focus();
+}

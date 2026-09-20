@@ -61,6 +61,11 @@ button:focus-visible, [tabindex]:focus-visible {
 }
 
 /* ---- onboarding ---- */
+/* Set in the head before paint, so a returning reader never sees the lock
+   screen blink past. main.js drops it and uses [hidden] from then on. */
+html[data-first="gate"] #onboard { display: none; }
+html[data-first="onboard"] #gate { display: none; }
+
 .onboard {
   min-height: 100%;
   display: grid; place-items: center;
@@ -77,6 +82,7 @@ button:focus-visible, [tabindex]:focus-visible {
   margin-bottom: 32px; max-width: 36ch;
 }
 .onboard-card .btn { margin-top: 0; }
+.onboard-card .field { margin-bottom: 14px; padding: 14px 16px; }
 .onboard-card .fine { margin-top: 16px; color: #c0392b; font-size: 15px; }
 
 .progress { margin-bottom: 24px; }

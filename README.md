@@ -15,7 +15,11 @@ GitHub Actions**. Then run the **GitHub Pages** workflow, or merge to
 
     https://amaiaaguilar1-create.github.io/case-reader/
 
-**2. They open the link.** Three screens:
+**2. They open the link** and type the shared password. Send them the
+password separately from the link — a text, not the same email. They type it
+once per phone or computer; after that the device remembers.
+
+Then three screens:
 
 1. *Listen to what you read.* → Continue
 2. *Save the voice on this device.* About a minute, once. Then it works
@@ -30,6 +34,40 @@ To try it on your computer before Pages is live:
     cd site
     npm install
     npm run dev
+
+### About the password
+
+`site/src/lib/gate.js` holds a PBKDF2-SHA-256 hash of the password and the
+salt it was derived with — never the password itself, so a public repo does
+not give it away. Each guess costs 310,000 iterations, which makes grinding
+through them slow.
+
+Know what it is, though: every line of this site runs in the visitor's
+browser, so someone who reads the code can edit around the gate. It stops the
+passing stranger and keeps the link out of search results; it is not a vault.
+There is nothing behind it to steal — each reader's documents live in their
+own browser and never travel — so the gate is about who gets to *use* the
+page, not about protecting files.
+
+To change the password, derive a new salt and hash:
+
+    cd site
+    node -e 'const {webcrypto:w}=require("crypto");(async()=>{
+      const salt=w.getRandomValues(new Uint8Array(16));
+      const k=await w.subtle.importKey("raw",new TextEncoder().encode(process.argv[1]),
+        "PBKDF2",false,["deriveBits"]);
+      const b=await w.subtle.deriveBits({name:"PBKDF2",salt,iterations:310000,
+        hash:"SHA-256"},k,256);
+      const h=x=>[...new Uint8Array(x)].map(n=>n.toString(16).padStart(2,"0")).join("");
+      console.log("SALT="+h(salt));console.log("HASH="+h(b));})()' 'the new password'
+
+Paste both into `gate.js`. Changing them also re-locks every device, because
+the remembered value no longer matches.
+
+The test suite leaves the password out on purpose. To exercise the accepting
+path locally:
+
+    READER_PASSPHRASE='the password' npm test
 
 ## Run the original Mac app
 
@@ -92,7 +130,8 @@ Things worth knowing:
 - server/     FastAPI app: SQLite library, imports, chunk synthesis with a
               background prefetch of the next spoken pack, audio serving.
 - site/       static Case Reader: in-browser Kokoro, IndexedDB library,
-              three-screen onboarding. This is what GitHub Pages serves.
+              shared-password gate, three-screen onboarding. This is what
+              GitHub Pages serves.
 - web/        single-file frontend, no build step. Speechify-style reader:
               library rail, serif reading view, follow-along word highlight,
               click-to-seek, floating player with speed 0.75-3x
