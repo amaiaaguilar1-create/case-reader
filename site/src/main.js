@@ -91,9 +91,12 @@ function setPlayIcon(kind) {
   $("play").setAttribute("aria-label", kind === "pause" ? "Pause" : "Play");
 }
 
+// Only the narrative is spoken. Running heads and feet, footnotes, endnotes,
+// exhibit tables and the publisher's licensing block are all on the page to be
+// looked at, not listened to; layout.js is what tells them apart.
 function isReadable(i) {
   const s = state.doc?.sentences[i];
-  return s && s.kind !== "header";
+  return s && s.kind === "body";
 }
 
 function nextReadable(from, dir) {
@@ -601,7 +604,7 @@ function updateTime() {
   if (!state.doc) return;
   let before = 0, total = 0;
   for (const s of state.doc.sentences) {
-    if (s.kind === "header") continue;
+    if (s.kind !== "body") continue;
     const d = state.durations.get(s.id) ?? AVG;
     if (s.id < state.sent) before += d;
     total += d;
