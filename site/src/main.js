@@ -36,7 +36,7 @@ function toast(msg) {
 }
 
 function showStep(name) {
-  document.querySelectorAll(".onboard-card").forEach(el => {
+  $("onboard").querySelectorAll(".onboard-card").forEach(el => {
     el.hidden = el.dataset.step !== name;
   });
 }
