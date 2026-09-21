@@ -25,6 +25,11 @@ const state = {
   tIdx: 0,
   chunkCache: new Map(),
   step: 0,
+  // Every play request takes the next number. Anything that resumes after an
+  // await checks it still holds the current one, so an older request that was
+  // waiting on synthesis cannot start speaking over the new one.
+  gen: 0,
+  clips: new Set(),
   durations: new Map(),
   raf: 0,
 };
@@ -160,6 +165,7 @@ async function openDoc(id) {
   state.doc = doc;
   state.sent = doc.position || 0;
   state.chunkCache.clear();
+  state.clips.clear();
   state.durations.clear();
   renderDoc(doc);
   markSentence();
@@ -240,6 +246,7 @@ async function fetchChunk(sentId, limit) {
       for (const id of pack.ids.slice(1)) state.durations.set(id, 0);
       const el = new Audio(clip.url);
       el.preload = "auto";
+      state.clips.add(el);
       return { ...clip, ...pack, el };
     })());
   }
@@ -248,12 +255,19 @@ async function fetchChunk(sentId, limit) {
 
 async function playSentence(sentId, continuing = false) {
   if (!state.doc) return;
+  // Reading on from the previous pack belongs to the request that started it;
+  // anything else is a new request and supersedes whatever was pending.
+  const gen = continuing ? state.gen : ++state.gen;
+  const docId = state.doc.id;
+  const current = () => gen === state.gen && state.doc?.id === docId;
+
   try { await ensureVoice(); }
   catch { toast("Couldn’t get the voice ready. Check your connection and try again."); return; }
+  if (!current()) return;
   const target = nextReadable(sentId, 1);
   if (target < 0) { stop(); return; }
   sentId = target;
-  if (state.audio) { state.audio.onended = null; state.audio.pause(); }
+  silence();
   cancelAnimationFrame(state.raf);
   state.sent = sentId;
   markSentence();
@@ -264,8 +278,14 @@ async function playSentence(sentId, continuing = false) {
   state.step = step;
   let chunk;
   try { chunk = await fetchChunk(sentId, packLimit(step)); }
-  catch (e) { toast(e.message || "Playback failed."); stop(); return; }
-  if (state.sent !== sentId) return;
+  catch (e) {
+    if (current()) { toast(e.message || "Playback failed."); stop(); }
+    return;
+  }
+  // Synthesis takes seconds. The reader may have pressed play on something
+  // else in the meantime -- both documents start at sentence 0, so comparing
+  // sentence numbers alone used to let both of them start speaking.
+  if (!current()) return;
   state.timings = chunk.timings;
   state.pack = chunk.parts;
   state.tIdx = 0;
@@ -276,7 +296,8 @@ async function playSentence(sentId, continuing = false) {
   state.audio = a;
   const ahead = nextReadable(chunk.through + 1, 1);
   a.onended = () => playSentence(ahead, true);
-  try { await a.play(); } catch { stop(); return; }
+  try { await a.play(); } catch { if (current()) stop(); return; }
+  if (!current()) { a.onended = null; a.pause(); return; }
   state.playing = true;
   setPlayIcon("pause");
   savePosition(state.doc.id, state.sent).catch(() => {});
@@ -290,10 +311,20 @@ async function playSentence(sentId, continuing = false) {
   highlightLoop();
 }
 
+/** Silence every clip, not just the current one: a pending request may have
+ *  started one that `state.audio` no longer points at. */
+function silence() {
+  for (const el of state.clips) {
+    el.onended = null;
+    if (!el.paused) el.pause();
+  }
+}
+
 function stop() {
   state.playing = false;
+  state.gen++;
   cancelAnimationFrame(state.raf);
-  if (state.audio) { state.audio.onended = null; state.audio.pause(); }
+  silence();
   setPlayIcon("play");
 }
 
