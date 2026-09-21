@@ -1,4 +1,5 @@
 import { buildDocument } from "./chunker.js";
+import { buildLayoutDocument, extractLayout } from "./layout.js";
 
 export class ScannedPDFError extends Error {
   constructor() {
@@ -12,6 +13,9 @@ function fromPlain(title, text) {
   if (!doc.sentences.length) {
     throw new Error("Nothing readable turned up in that file.");
   }
+  // Pasted text has no pages to show, but the field is always there so callers
+  // never have to ask which kind of document they were handed.
+  doc.pages = [];
   return doc;
 }
 
@@ -39,16 +43,14 @@ async function parsePdf(file, title) {
   ).href;
   const data = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjs.getDocument({ data }).promise;
-  const parts = [];
-  for (let i = 1; i <= pdf.numPages; i++) {
-    const page = await pdf.getPage(i);
-    const content = await page.getTextContent();
-    const line = content.items.map(it => ("str" in it ? it.str : "")).join(" ").trim();
-    if (line) parts.push(line);
+  const layout = await extractLayout(pdf);
+  // A scan has a page image and next to no selectable text.
+  const chars = layout.words.reduce((n, w) => n + w.text.length, 0);
+  if (chars < 40) throw new ScannedPDFError();
+  const doc = buildLayoutDocument(title, layout);
+  if (!doc.sentences.length) {
+    throw new Error("Nothing readable turned up in that file.");
   }
-  const text = parts.join("\n\n");
-  if (text.replace(/\s/g, "").length < 40) throw new ScannedPDFError();
-  const doc = fromPlain(title, text);
   doc.file = file;
   return doc;
 }
