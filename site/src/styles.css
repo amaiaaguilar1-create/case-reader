@@ -166,6 +166,37 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: r
 .w.now { background: var(--word); }
 .prose .sent.furn { opacity: .38; }
 
+/* ---- original page view ---- */
+.sheets {
+  max-width: 940px; margin: 0 auto;
+  display: flex; flex-direction: column; gap: 24px;
+}
+.sheet {
+  position: relative; background: #fff;
+  border: 1px solid var(--line); border-radius: 6px;
+  box-shadow: 0 3px 18px rgba(28, 28, 30, 0.13); overflow: hidden;
+  /* Keep the overlay's z-indexes local; without a stacking context here the
+     transparent hit regions escape and swallow clicks on the player bar. */
+  isolation: isolate;
+}
+/* The sheet's aspect-ratio holds the page's shape, so the canvas can be
+   released and redrawn at a new size without anything shifting. */
+.sheet canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.ov { position: absolute; inset: 0; }
+/* Highlights sit above the page render; hit regions below them catch taps.
+   Multiply keeps the printed words legible through the tint. */
+.ov .sb, .ov .wb {
+  position: absolute; border-radius: 3px;
+  pointer-events: none; mix-blend-mode: multiply; z-index: 2;
+}
+.ov .sb { background: var(--tint); }
+.ov .wb { background: var(--word); z-index: 3; }
+.ov .hit { position: absolute; z-index: 1; cursor: pointer; border-radius: 3px; }
+.ov .hit:hover { background: rgba(91, 76, 219, .07); }
+/* Headers, footers and footnotes stay on the page but are never spoken. */
+.ov .hit.furn { cursor: default; }
+.ov .hit.furn:hover { background: none; }
+
 .player {
   position: absolute; left: 50%; bottom: calc(22px + var(--safe-b));
   transform: translateX(-50%);
@@ -173,7 +204,8 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: r
   background: var(--card); border: 1px solid var(--line);
   border-radius: 22px; box-shadow: var(--shadow);
   padding: 12px 16px 14px;
-  display: none; flex-direction: column; gap: 8px; z-index: 10;
+  display: none; flex-direction: column; gap: 8px;
+  z-index: 10;  /* always above the page render and its overlay */
 }
 .player.on { display: flex; }
 .p-top { display: flex; align-items: center; gap: 10px; }
@@ -181,8 +213,15 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: r
 .scrub .track { width: 100%; height: 4px; border-radius: 99px; background: var(--line); overflow: hidden; }
 .scrub .track i { display: block; height: 100%; width: 0; background: var(--grad); }
 .p-time { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 72px; text-align: right; }
-.p-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.p-center { display: flex; align-items: center; gap: 14px; }
+/* Wrap rather than push controls past the bar's edge, which put the speed
+   chip out of reach on narrower windows. */
+.p-main {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px 12px; flex-wrap: wrap;
+}
+.p-group { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; }
+.p-group.right { justify-content: flex-end; }
+.p-center { display: flex; align-items: center; gap: 14px; flex: 0 0 auto; margin: 0 auto; }
 .icon-btn { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; }
 .icon-btn:hover { background: #f3f1ec; }
 .play {
@@ -194,8 +233,12 @@ main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: r
 .chip {
   border: 1px solid var(--line); border-radius: 999px;
   padding: 7px 13px; font-weight: 600; font-size: 13px; background: #fff;
+  white-space: nowrap; flex: 0 0 auto;
 }
-select.chip { appearance: none; max-width: 120px; padding-right: 22px; }
+select.chip {
+  appearance: none; min-width: 0; max-width: 120px;
+  padding-right: 22px; text-overflow: ellipsis;
+}
 
 .spin {
   width: 16px; height: 16px; border-radius: 50%;
@@ -244,6 +287,7 @@ textarea.field { min-height: 140px; resize: vertical; }
   .reader { padding: 28px 20px 170px; }
   .page h1 { font-size: 28px; }
   .prose { font-size: 19px; }
+  .sheets { gap: 16px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

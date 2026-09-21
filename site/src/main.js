@@ -7,14 +7,33 @@ import {
   DEFAULT_VOICE, VOICES, loadVoice, packFrom, synthesize, voiceReady,
 } from "./lib/tts.js";
 import { remember, unlocked, verify } from "./lib/gate.js";
+import {
+  clearWord, hasPages, mount as mountPages, mounted as pagesMounted,
+  paintSentence, paintWord, unmount as unmountPages,
+} from "./lib/pageview.js";
 
 const $ = id => document.getElementById(id);
 const SPEEDS = [0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
 const PLAY = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 const PAUSE = '<svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zm6 0h4v14h-4z"/></svg>';
 
+// Which view this device last used. It belongs to the device, not the
+// document: the original page is the point on a laptop, and prose is the
+// kinder read on a phone. Private browsing can refuse storage, so both
+// sides shrug and fall back to the page.
+const PREF = {
+  get view() {
+    try { return localStorage.getItem("caseReader.view") === "prose" ? "prose" : "original"; }
+    catch { return "original"; }
+  },
+  set view(v) {
+    try { localStorage.setItem("caseReader.view", v); } catch { /* not storable */ }
+  },
+};
+
 const state = {
   doc: null,
+  view: PREF.view,
   sent: 0,
   playing: false,
   speed: 1,
@@ -116,9 +135,7 @@ async function refreshLibrary() {
         deleteDoc(d.id).then(async () => {
           if (state.doc?.id === d.id) {
             state.doc = null;
-            $("page").hidden = true;
-            $("hero").hidden = false;
-            $("player").classList.remove("on");
+            clearView();
           }
           await refreshLibrary();
         });
@@ -133,15 +150,28 @@ async function refreshLibrary() {
 
 function renderDoc(doc) {
   $("hero").hidden = true;
-  $("page").hidden = false;
   $("player").classList.add("on");
   $("docTitle").textContent = doc.title;
   $("topTitle").textContent = doc.title;
+  renderProse(doc);
+  unmountPages($("sheets"));
+  if (hasPages(doc)) {
+    mountPages($("sheets"), doc, playSentence).catch(() => {
+      // The page render needs the original file back. If it will not open,
+      // prose is still a complete read of the same document.
+      unmountPages($("sheets"));
+      applyView();
+    });
+  }
+  applyView();
+}
+
+function renderProse(doc) {
   const prose = $("prose");
   prose.innerHTML = "";
   for (const s of doc.sentences) {
     const span = document.createElement("span");
-    span.className = "sent" + (s.kind === "header" ? " furn" : "");
+    span.className = "sent" + (s.kind === "body" ? "" : " furn");
     span.id = "s" + s.id;
     s.words.forEach((w, i) => {
       const word = document.createElement("span");
@@ -156,6 +186,32 @@ function renderDoc(doc) {
     prose.appendChild(span);
     prose.appendChild(document.createTextNode(" "));
   }
+}
+
+/** Is the highlight being drawn on the page render rather than in prose? */
+function onPages() {
+  return state.view === "original" && pagesMounted();
+}
+
+function applyView() {
+  const paged = pagesMounted();
+  const original = paged && state.view === "original";
+  $("page").hidden = !state.doc || original;
+  $("sheets").hidden = !original;
+  $("view").hidden = !paged;
+  // The chip names the view it switches to, not the one showing.
+  $("viewTxt").textContent = original ? "Text" : "Original";
+  markSentence();
+}
+
+/** Put the reader back on the empty state, with nothing left rendering. */
+function clearView() {
+  unmountPages($("sheets"));
+  $("sheets").hidden = true;
+  $("page").hidden = true;
+  $("hero").hidden = false;
+  $("view").hidden = true;
+  $("player").classList.remove("on");
 }
 
 async function openDoc(id) {
@@ -184,8 +240,17 @@ function locatePacked(idx) {
   return [last.id, Math.max(0, last.words - 1)];
 }
 
-let lastWord = null;
+let lastWord = null, lastWordKey = null;
 function setWord(wi) {
+  // The highlight loop asks on every frame. Only touch the DOM when the
+  // spoken word has actually moved on.
+  const key = state.sent + ":" + wi;
+  if (key === lastWordKey) return;
+  lastWordKey = key;
+  if (onPages()) {
+    paintWord(state.doc.sentences[state.sent], wi);
+    return;
+  }
   lastWord?.classList.remove("now");
   lastWord = document.querySelector(`.w[data-s="${state.sent}"][data-w="${wi}"]`);
   lastWord?.classList.add("now");
@@ -193,19 +258,33 @@ function setWord(wi) {
 
 let lastSent = null;
 function markSentence() {
-  lastWord?.classList.remove("now");
-  lastWord = null;
-  lastSent?.classList.remove("now");
-  lastSent = $("s" + state.sent);
-  if (lastSent) {
-    lastSent.classList.add("now");
-    const box = lastSent.getBoundingClientRect();
-    const view = $("reader").getBoundingClientRect();
-    if (box.top < view.top + 48 || box.bottom > view.bottom - 180) {
-      lastSent.scrollIntoView({ block: "center" });
+  if (!state.doc) return;
+  lastWordKey = null;
+  if (onPages()) {
+    clearWord();
+    scrollIfNeeded(paintSentence(state.doc.sentences[state.sent]));
+  } else {
+    lastWord?.classList.remove("now");
+    lastWord = null;
+    lastSent?.classList.remove("now");
+    lastSent = $("s" + state.sent);
+    if (lastSent) {
+      lastSent.classList.add("now");
+      scrollIfNeeded(lastSent);
     }
   }
   updateTime();
+}
+
+/** Nudge the sentence back into view, but only once it has drifted towards
+ *  an edge -- the player bar covers the bottom of the reader. */
+function scrollIfNeeded(el) {
+  if (!el) return;
+  const box = el.getBoundingClientRect();
+  const view = $("reader").getBoundingClientRect();
+  if (box.top < view.top + 48 || box.bottom > view.bottom - 180) {
+    el.scrollIntoView({ block: "center" });
+  }
 }
 
 function highlightLoop() {
@@ -439,6 +518,10 @@ $("prev").onclick = () => {
   if (prev >= 0) playSentence(prev);
 };
 $("next").onclick = () => state.doc && playSentence(state.sent + 1);
+$("view").onclick = () => {
+  state.view = PREF.view = state.view === "original" ? "prose" : "original";
+  applyView();
+};
 $("speed").onclick = () => {
   state.speed = SPEEDS[(SPEEDS.indexOf(state.speed) + 1) % SPEEDS.length];
   $("speedTxt").textContent = state.speed + "x";
