@@ -4,7 +4,8 @@ import {
   deleteDoc, getDoc, listDocs, metaGet, metaSet, saveDoc, savePosition,
 } from "./lib/db.js";
 import {
-  DEFAULT_VOICE, VOICES, loadVoice, packFrom, synthesize, voiceReady,
+  DEFAULT_VOICE, NOW, SOON, VOICES, dropGuesses, loadVoice, packFrom, raise,
+  synthesize, voiceReady,
 } from "./lib/tts.js";
 import { remember, unlocked, verify } from "./lib/gate.js";
 
@@ -24,7 +25,15 @@ const state = {
   pack: [],
   tIdx: 0,
   chunkCache: new Map(),
-  step: 0,
+  // Speech that is made but not yet heard, keyed by the place it starts and
+  // pointing at the place it ends, so the queue can be followed from wherever
+  // the reader is. It is what says how much room the next pack has.
+  ahead: new Map(),
+  nextAt: "",
+  // Measured from the clips that come back, so the sums below follow the
+  // voice and the machine rather than a guess made on one laptop.
+  charsPerSec: 14,
+  ratio: 0.95,
   // Every play request takes the next number. Anything that resumes after an
   // await checks it still holds the current one, so an older request that was
   // waiting on synthesis cannot start speaking over the new one.
@@ -83,11 +92,38 @@ async function ensureVoice(onProgress) {
   if (voiceReady()) return;
   $("banner").hidden = false;
   try {
-    await loadVoice(onProgress || (() => {}));
+    await loadVoice(onProgress || (() => {}), state.voice);
     await metaSet("voiceSaved", true);
   } finally {
     $("banner").hidden = true;
   }
+}
+
+/**
+ * Say how the first pack is coming along.
+ *
+ * The wait is the length of the pack being made, and we know its size and how
+ * fast this machine speaks, so the estimate is honest. A spinner that sits
+ * there for four seconds reads as a freeze; a number that moves does not.
+ * Returns the function that takes the message away again.
+ */
+let bannerText = "";
+function awaiting(limit) {
+  const el = $("banner");
+  bannerText ||= el.textContent;
+  const expect = Math.max(400, 1000 * limit / state.charsPerSec * state.ratio);
+  const from = performance.now();
+  const timer = setInterval(() => {
+    const done = (performance.now() - from) / expect;
+    if (done < 0.15) return;  // a flash of text is worse than no text
+    el.textContent = `Getting the first words ready… ${Math.min(99, Math.round(done * 100))}%`;
+    el.hidden = false;
+  }, 150);
+  return () => {
+    clearInterval(timer);
+    el.hidden = true;
+    el.textContent = bannerText;
+  };
 }
 
 async function importDoc(built) {
@@ -170,18 +206,21 @@ async function openDoc(id) {
   renderDoc(doc);
   markSentence();
   await refreshLibrary();
+  prefetchOpening(doc.id);
 }
 
 function locatePacked(idx) {
   const parts = state.pack.length
     ? state.pack : [{ id: state.sent, words: state.timings.length }];
   let off = 0;
+  // `from` is where the pack picked the sentence up: a pack may start partway
+  // through a long one, and the word being lit is counted from its beginning.
   for (const p of parts) {
-    if (idx < off + p.words) return [p.id, idx - off];
+    if (idx < off + p.words) return [p.id, (p.from || 0) + idx - off];
     off += p.words;
   }
   const last = parts.at(-1);
-  return [last.id, Math.max(0, last.words - 1)];
+  return [last.id, Math.max(0, (last.from || 0) + last.words - 1)];
 }
 
 let lastWord = null;
@@ -223,37 +262,146 @@ function highlightLoop() {
   updateTime();
 }
 
-// Synthesis runs at roughly real time, so a pack takes about as long to make
-// as it takes to hear. That sets the shape of this: the first pack is small so
-// speech starts soon, and the rest are only a little larger, because a pack
-// much longer than the one playing cannot be ready before it ends. Growing
-// them to the chunker's full 480 characters buys nicer phrasing and pays for
-// it with a silence at the first boundary.
-const FIRST_CHARS = 150;
+// Synthesis runs at roughly real time -- measured at 0.93x on a 12-core Mac,
+// and near enough the same whether the pack is five seconds of speech or
+// thirteen. Two things follow. A pack can only be about seven percent longer
+// than the speech already in hand, or it is still being made when the reader
+// reaches the end of the queue and hears silence. And the wait before the
+// first word is almost exactly the length of the first pack, which is why the
+// opening is a few seconds of speech and no more, even when that means
+// stopping partway through a long sentence.
+const FIRST_CHARS = 44;
 const PACK_CHARS = 170;
+const OPENING_BANK = 26;
 
-function packLimit(step) {
-  return step === 0 ? FIRST_CHARS : PACK_CHARS;
-}
+const ease = (was, now) => was + 0.4 * (now - was);
+// How fast this voice speaks, guessed low: a pack that comes out shorter than
+// its budget costs a little growth, one that comes out longer costs silence.
+// So drop to a slower reading at once, and creep back up.
+const guessLow = (was, now) => (now < was ? now : was + 0.05 * (now - was));
 
-async function fetchChunk(sentId, limit) {
-  const key = `${sentId}|${state.voice}|${limit || "full"}`;
-  if (!state.chunkCache.has(key)) {
-    state.chunkCache.set(key, (async () => {
-      const pack = packFrom(state.doc.sentences, sentId, limit);
-      const clip = await synthesize(pack.text, pack.words, state.voice);
-      state.durations.set(pack.ids[0], clip.duration);
-      for (const id of pack.ids.slice(1)) state.durations.set(id, 0);
-      const el = new Audio(clip.url);
-      el.preload = "auto";
-      state.clips.add(el);
-      return { ...clip, ...pack, el };
-    })());
+const at = (sentId, word) => `${sentId}+${word}`;
+
+/**
+ * Seconds of wall clock covered by speech that is made and not yet heard.
+ *
+ * Only the packs that follow on from each other count: after a seek the queue
+ * may still hold clips for somewhere else, and they are no help here.
+ */
+function banked() {
+  const a = state.audio;
+  let s = a && !a.paused && a.duration ? Math.max(0, a.duration - a.currentTime) : 0;
+  const seen = new Set();
+  for (let pos = state.nextAt; state.ahead.has(pos) && !seen.has(pos);) {
+    seen.add(pos);
+    const link = state.ahead.get(pos);
+    s += link.duration;
+    pos = link.next;
   }
-  return state.chunkCache.get(key);
+  return s / state.speed;
 }
 
-async function playSentence(sentId, continuing = false) {
+/**
+ * How long the next pack may be, in characters, given `seconds` of speech in
+ * hand.
+ *
+ * Making speech costs `ratio` seconds per second of speech, so that much can
+ * be made in the time it takes to hear what is queued. The margin keeps a
+ * little under the ceiling; with nothing in hand the pack gets the floor.
+ */
+function packLimit(seconds) {
+  const room = seconds * 0.96 / state.ratio;
+  return Math.max(FIRST_CHARS,
+    Math.min(PACK_CHARS, Math.round(room * state.charsPerSec)));
+}
+
+/**
+ * The size to ask for at `pos`. Speech already made for that exact spot is
+ * speech we keep: asking for a different size would throw away a pack that is
+ * ready to play.
+ */
+function limitFor(pos) {
+  return state.ahead.get(pos)?.limit ?? packLimit(banked());
+}
+
+async function fetchChunk(sentId, fromWord, limit, opts = {}) {
+  const key = `${sentId}+${fromWord}|${state.voice}|${limit}`;
+  let slot = state.chunkCache.get(key);
+  if (!slot) {
+    const pack = packFrom(state.doc.sentences, sentId, limit, fromWord);
+    // Claim the place before the work starts. Whoever asks for it next -- the
+    // reader arriving here, the run-ahead getting there -- then asks for this
+    // same size and waits for this pack, instead of setting a second one going
+    // that nobody will listen to.
+    state.ahead.set(at(sentId, fromWord), { duration: 0, next: "", limit });
+    slot = { text: pack.text, chunk: makeChunk(pack, sentId, fromWord, key, opts) };
+    state.chunkCache.set(key, slot);
+  } else if ((opts.priority ?? NOW) === NOW) {
+    // A guess the reader is now waiting for: it goes to the front of the queue.
+    raise(slot.text, state.voice);
+  }
+  return slot.chunk;
+}
+
+async function makeChunk(pack, sentId, fromWord, key, opts) {
+  const clip = await synthesize(pack.text, pack.words, state.voice, opts);
+  // A part-sentence adds to what its earlier part already counted.
+  const head = pack.ids[0];
+  state.durations.set(head,
+    (fromWord ? state.durations.get(head) || 0 : 0) + clip.duration);
+  for (const id of pack.ids.slice(1)) state.durations.set(id, 0);
+  if (clip.duration > 0) {
+    state.charsPerSec = guessLow(state.charsPerSec, pack.text.length / clip.duration);
+    if (clip.ms) state.ratio = ease(state.ratio, clip.ms / 1000 / clip.duration);
+  }
+  const el = new Audio(clip.url);
+  el.preload = "auto";
+  state.clips.add(el);
+  const from = at(sentId, fromWord);
+  const to = pack.thruWord
+    ? at(pack.through, pack.thruWord)
+    : at(nextReadable(pack.through + 1, 1), 0);
+  // Speech in hand, until the moment it starts playing.
+  const link = state.ahead.get(from);
+  if (link) {
+    link.duration = clip.duration;
+    link.next = to;
+  }
+  return { ...clip, ...pack, key, from, to, el };
+}
+
+/**
+ * Start making the opening of a document nobody has pressed play on yet.
+ *
+ * Synthesis is the whole of the wait, and the worker sits idle while a
+ * document is merely open, so the first packs can be ready before they are
+ * asked for. The work goes in below anything being listened to and is dropped
+ * the moment the reader opens something else.
+ */
+async function prefetchOpening(docId) {
+  const tag = String(docId);
+  dropGuesses(tag);
+  // The voice may still be loading when a document is opened -- it is loaded
+  // on the way in either way, so wait for it rather than give up the guess.
+  if (!voiceReady()) {
+    try { await loadVoice(); } catch { return; }
+    if (state.doc?.id !== docId || state.playing) return;
+  }
+  let sent = nextReadable(state.sent, 1), word = 0, made = 0;
+  for (let i = 0; i < 5 && sent >= 0 && made < OPENING_BANK; i++) {
+    if (state.doc?.id !== docId || state.playing) return;
+    const limit = i ? packLimit(made) : FIRST_CHARS;
+    let chunk;
+    try { chunk = await fetchChunk(sent, word, limit, { priority: SOON, tag }); }
+    catch { return; }
+    if (state.doc?.id !== docId) return;
+    made += chunk.duration;
+    word = chunk.thruWord;
+    sent = word ? chunk.through : nextReadable(chunk.through + 1, 1);
+  }
+}
+
+async function playSentence(sentId, continuing = false, fromWord = 0) {
   if (!state.doc) return;
   // Reading on from the previous pack belongs to the request that started it;
   // anything else is a new request and supersedes whatever was pending.
@@ -264,7 +412,7 @@ async function playSentence(sentId, continuing = false) {
   try { await ensureVoice(); }
   catch { toast("Couldn’t get the voice ready. Check your connection and try again."); return; }
   if (!current()) return;
-  const target = nextReadable(sentId, 1);
+  const target = fromWord ? sentId : nextReadable(sentId, 1);
   if (target < 0) { stop(); return; }
   sentId = target;
   silence();
@@ -272,16 +420,21 @@ async function playSentence(sentId, continuing = false) {
   state.sent = sentId;
   markSentence();
   if (!state.playing) setPlayIcon("load");
-  // Reading on from the last pack keeps the ramp; anything the reader asked
-  // for -- play, a seek, a tapped word -- starts small again so it is quick.
-  const step = continuing ? state.step + 1 : 0;
-  state.step = step;
+  // Whatever speech is already in hand for this place decides how long this
+  // pack may be. Reading on, that is the rest of the queue; when the reader
+  // has just asked for somewhere new it is usually nothing, so the pack is
+  // short and the first word comes quickly.
+  state.nextAt = at(sentId, fromWord);
+  const limit = limitFor(state.nextAt);
   let chunk;
-  try { chunk = await fetchChunk(sentId, packLimit(step)); }
+  const done = continuing ? null : awaiting(limit);
+  try { chunk = await fetchChunk(sentId, fromWord, limit, { tag: String(docId) }); }
   catch (e) {
+    done?.();
     if (current()) { toast(e.message || "Playback failed."); stop(); }
     return;
   }
+  done?.();
   // Synthesis takes seconds. The reader may have pressed play on something
   // else in the meantime -- both documents start at sentence 0, so comparing
   // sentence numbers alone used to let both of them start speaking.
@@ -294,21 +447,32 @@ async function playSentence(sentId, continuing = false) {
   a.playbackRate = state.speed;
   if ("preservesPitch" in a) a.preservesPitch = true;
   state.audio = a;
-  const ahead = nextReadable(chunk.through + 1, 1);
-  a.onended = () => playSentence(ahead, true);
+  // Where reading goes on: the rest of this sentence, if the pack stopped
+  // partway through it, or the next one.
+  const onWord = chunk.thruWord;
+  const onSent = onWord ? chunk.through : nextReadable(chunk.through + 1, 1);
+  a.onended = () => playSentence(onSent, true, onWord);
   try { await a.play(); } catch { if (current()) stop(); return; }
   if (!current()) { a.onended = null; a.pause(); return; }
   state.playing = true;
+  state.ahead.delete(state.nextAt);
+  state.nextAt = chunk.to;
   setPlayIcon("pause");
   savePosition(state.doc.id, state.sent).catch(() => {});
-  // Keep two packs in hand, so a slow machine still reads without gaps.
-  if (ahead >= 0) {
-    fetchChunk(ahead, packLimit(step + 1)).then(next => {
-      const after = nextReadable(next.through + 1, 1);
-      if (after >= 0) fetchChunk(after, packLimit(step + 2)).catch(() => {});
-    }).catch(() => {});
-  }
+  // Keep two packs in hand, so a slow machine still reads without gaps. Each
+  // is sized when it is asked for, against the speech in hand at that moment.
+  if (onSent >= 0) keepAhead(onSent, onWord, docId, 2);
   highlightLoop();
+}
+
+/** Make the next `depth` packs, each as long as the queue can afford. */
+function keepAhead(sentId, fromWord, docId, depth) {
+  const limit = limitFor(at(sentId, fromWord));
+  fetchChunk(sentId, fromWord, limit, { tag: String(docId) }).then(next => {
+    if (state.doc?.id !== docId) return;
+    const on = next.thruWord ? next.through : nextReadable(next.through + 1, 1);
+    if (depth > 1 && on >= 0) keepAhead(on, next.thruWord, docId, depth - 1);
+  }).catch(() => {});
 }
 
 /** Silence every clip, not just the current one: a pending request may have
@@ -325,6 +489,15 @@ function stop() {
   state.gen++;
   cancelAnimationFrame(state.raf);
   silence();
+  // Forget the clip as well as pausing it. `resume` picks up a paused clip
+  // where it left off, and stopping happens when the reader opens another
+  // document -- without this, pressing play there carried on reading the one
+  // they left, out of a page that no longer says those words.
+  state.audio = null;
+  state.timings = [];
+  state.pack = [];
+  state.ahead.clear();
+  state.nextAt = "";
   setPlayIcon("play");
 }
 
@@ -455,6 +628,7 @@ $("scrub").onclick = e => {
 $("voice").onchange = e => {
   state.voice = e.target.value;
   state.chunkCache.clear();
+  state.ahead.clear();
   if (state.playing) playSentence(state.sent);
 };
 document.addEventListener("keydown", e => {

@@ -54,6 +54,9 @@ async function speak(id, text, voice) {
   );
 }
 
+// One request at a time, in the order they arrive: inference cannot be
+// interrupted once it starts, so the only useful place to reorder or drop work
+// is before it is sent. That queue lives in tts.js.
 self.onmessage = async ({ data }) => {
   const { type, id } = data;
   try {
