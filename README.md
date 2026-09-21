@@ -131,13 +131,27 @@ Things worth knowing:
               background prefetch of the next spoken pack, audio serving.
 - site/       static Case Reader: in-browser Kokoro, IndexedDB library,
               shared-password gate, three-screen onboarding. This is what
-              GitHub Pages serves.
+              GitHub Pages serves. Synthesis runs in a worker; a service
+              worker adds the COOP/COEP headers Pages cannot, so ONNX gets
+              more than one core.
 - web/        single-file frontend, no build step. Speechify-style reader:
               library rail, serif reading view, follow-along word highlight,
               click-to-seek, floating player with speed 0.75-3x
               (pitch-preserved) and voice picker. Space / arrow keys work.
 
 ## Engineering notes (findings from validated testing)
+
+- In the browser, synthesis is roughly real time: a pack takes about as long
+  to make as it takes to hear. That sets the pack size. The first pack is
+  small (150 chars) so speech starts in about ten seconds; the rest are 170,
+  because a pack much longer than the one playing cannot be ready before it
+  ends. Measured on a 12-core Mac: 480-char packs left a 13-second silence at
+  the first boundary, 260 left 5, and 170 reads for two minutes with none.
+- Cross-origin isolation is what makes that possible. Without it onnxruntime
+  runs on one core and synthesis is ~2x slower than real time, so playback
+  can never keep up. GitHub Pages sends no COOP/COEP headers, so
+  site/public/coi-serviceworker.js adds them from a service worker. Safari
+  does not support `credentialless` COEP and stays single-threaded.
 
 - kokoro-onnx exposes no word timestamps; timings are estimated by
   distributing measured audio duration across words with punctuation-aware

@@ -24,6 +24,7 @@ const state = {
   pack: [],
   tIdx: 0,
   chunkCache: new Map(),
+  step: 0,
   durations: new Map(),
   raf: 0,
 };
@@ -216,11 +217,24 @@ function highlightLoop() {
   updateTime();
 }
 
-async function fetchChunk(sentId) {
-  const key = `${sentId}|${state.voice}`;
+// Synthesis runs at roughly real time, so a pack takes about as long to make
+// as it takes to hear. That sets the shape of this: the first pack is small so
+// speech starts soon, and the rest are only a little larger, because a pack
+// much longer than the one playing cannot be ready before it ends. Growing
+// them to the chunker's full 480 characters buys nicer phrasing and pays for
+// it with a silence at the first boundary.
+const FIRST_CHARS = 150;
+const PACK_CHARS = 170;
+
+function packLimit(step) {
+  return step === 0 ? FIRST_CHARS : PACK_CHARS;
+}
+
+async function fetchChunk(sentId, limit) {
+  const key = `${sentId}|${state.voice}|${limit || "full"}`;
   if (!state.chunkCache.has(key)) {
     state.chunkCache.set(key, (async () => {
-      const pack = packFrom(state.doc.sentences, sentId);
+      const pack = packFrom(state.doc.sentences, sentId, limit);
       const clip = await synthesize(pack.text, pack.words, state.voice);
       state.durations.set(pack.ids[0], clip.duration);
       for (const id of pack.ids.slice(1)) state.durations.set(id, 0);
@@ -232,7 +246,7 @@ async function fetchChunk(sentId) {
   return state.chunkCache.get(key);
 }
 
-async function playSentence(sentId) {
+async function playSentence(sentId, continuing = false) {
   if (!state.doc) return;
   try { await ensureVoice(); }
   catch { toast("Couldn’t get the voice ready. Check your connection and try again."); return; }
@@ -244,8 +258,12 @@ async function playSentence(sentId) {
   state.sent = sentId;
   markSentence();
   if (!state.playing) setPlayIcon("load");
+  // Reading on from the last pack keeps the ramp; anything the reader asked
+  // for -- play, a seek, a tapped word -- starts small again so it is quick.
+  const step = continuing ? state.step + 1 : 0;
+  state.step = step;
   let chunk;
-  try { chunk = await fetchChunk(sentId); }
+  try { chunk = await fetchChunk(sentId, packLimit(step)); }
   catch (e) { toast(e.message || "Playback failed."); stop(); return; }
   if (state.sent !== sentId) return;
   state.timings = chunk.timings;
@@ -257,12 +275,18 @@ async function playSentence(sentId) {
   if ("preservesPitch" in a) a.preservesPitch = true;
   state.audio = a;
   const ahead = nextReadable(chunk.through + 1, 1);
-  a.onended = () => playSentence(ahead);
+  a.onended = () => playSentence(ahead, true);
   try { await a.play(); } catch { stop(); return; }
   state.playing = true;
   setPlayIcon("pause");
   savePosition(state.doc.id, state.sent).catch(() => {});
-  if (ahead >= 0) fetchChunk(ahead).catch(() => {});
+  // Keep two packs in hand, so a slow machine still reads without gaps.
+  if (ahead >= 0) {
+    fetchChunk(ahead, packLimit(step + 1)).then(next => {
+      const after = nextReadable(next.through + 1, 1);
+      if (after >= 0) fetchChunk(after, packLimit(step + 2)).catch(() => {});
+    }).catch(() => {});
+  }
   highlightLoop();
 }
 
