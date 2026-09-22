@@ -4,8 +4,8 @@ import {
   deleteDoc, getDoc, listDocs, metaGet, metaSet, saveDoc, savePosition,
 } from "./lib/db.js";
 import {
-  DEFAULT_VOICE, NOW, SOON, VOICES, dropGuesses, loadVoice, packFrom, raise,
-  synthesize, voiceReady,
+  DEFAULT_VOICE, MIDWAY_TAIL_MS, NOW, SENTENCE_TAIL_MS, SOON, VOICES,
+  dropGuesses, loadVoice, packFrom, raise, synthesize, voiceReady,
 } from "./lib/tts.js";
 import { remember, unlocked, verify } from "./lib/gate.js";
 import { setVoicePreference, voicePreference } from "./lib/backend.js";
@@ -438,12 +438,16 @@ async function fetchChunk(sentId, fromWord, limit, opts = {}) {
   let slot = state.chunkCache.get(key);
   if (!slot) {
     const pack = packFrom(state.doc.sentences, sentId, limit, fromWord);
+    // A pack that stopped partway through a sentence is carried straight on by
+    // the next one, so it must not end on a pause. One that finished a
+    // sentence should breathe before the next begins.
+    const tailMs = pack.thruWord ? MIDWAY_TAIL_MS : SENTENCE_TAIL_MS;
     // Claim the place before the work starts. Whoever asks for it next -- the
     // reader arriving here, the run-ahead getting there -- then asks for this
     // same size and waits for this pack, instead of setting a second one going
     // that nobody will listen to.
     state.ahead.set(at(sentId, fromWord), { duration: 0, next: "", limit });
-    slot = { text: pack.text, chunk: makeChunk(pack, sentId, fromWord, key, opts) };
+    slot = { text: pack.text, chunk: makeChunk(pack, sentId, fromWord, key, { ...opts, tailMs }) };
     state.chunkCache.set(key, slot);
   } else if ((opts.priority ?? NOW) === NOW) {
     // A guess the reader is now waiting for: it goes to the front of the queue.

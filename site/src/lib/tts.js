@@ -11,6 +11,9 @@ export const VOICES = [
   { id: "am_michael", label: "Michael" },
 ];
 
+export const SENTENCE_TAIL_MS = 220;
+export const MIDWAY_TAIL_MS = 40;
+
 export const DEFAULT_VOICE = "af_heart";
 
 /** What a request is worth. Lower speaks first. */
@@ -175,7 +178,7 @@ function run(s, job) {
   s.busy = true;
   s.guess = job.priority > NOW;
   job.started = true;
-  ask(s, { type: "speak", text: job.text, voice: job.voice })
+  ask(s, { type: "speak", text: job.text, voice: job.voice, tailMs: job.tailMs })
     .then(job.resolve, job.reject)
     .finally(() => {
       s.busy = false;
@@ -347,6 +350,9 @@ export async function synthesize(text, words, voice = DEFAULT_VOICE, opts = {}) 
   }
   const job = {
     text: spoken, voice, key, tag: opts.tag,
+    // How much silence to keep at the end: a sentence that has finished gets a
+    // breath, one the next pack carries straight on from gets almost none.
+    tailMs: opts.tailMs ?? SENTENCE_TAIL_MS,
     priority: opts.priority ?? NOW, started: false,
   };
   const clip = (async () => {

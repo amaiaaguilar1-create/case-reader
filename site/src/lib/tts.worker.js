@@ -111,7 +111,57 @@ function fellBack(chosen, err) {
  * backend's fault and retried on the safe one -- after that it is the text's
  * fault and reported as an error like any other.
  */
-async function speak(id, text, voice) {
+// Speech is quiet, not silent, between words, so the floor is generous enough
+// to catch room tone and low enough to keep a soft consonant.
+const FLOOR = 0.004;
+const WIN_MS = 10;
+
+/**
+ * Cut the silence Kokoro leaves at each end of a clip.
+ *
+ * It returns roughly 320ms of nothing before the first word and 450ms after
+ * the last, which is fine for one clip played alone and wrong for ours: a
+ * passage is several clips end to end, so that silence lands *inside* the
+ * reading as a three-quarter-second hang every few seconds -- including in
+ * the middle of a sentence, where a pack was split at a clause break.
+ *
+ * `tailMs` is how much to leave: a breath where a sentence ended, almost
+ * nothing where the words carry straight on. Trimming here rather than in the
+ * page also means the duration used for word timings is the duration of
+ * actual speech, so the highlight no longer starts a third of a second early.
+ */
+function trim(samples, sr, tailMs) {
+  const win = Math.max(1, Math.round((sr * WIN_MS) / 1000));
+  const loud = i => {
+    let sum = 0;
+    const end = Math.min(i + win, samples.length);
+    for (let j = i; j < end; j++) sum += samples[j] * samples[j];
+    return Math.sqrt(sum / (end - i)) >= FLOOR;
+  };
+  let start = 0;
+  while (start + win < samples.length && !loud(start)) start += win;
+  let end = samples.length;
+  while (end - win > start && !loud(end - win)) end -= win;
+  if (end <= start) return samples;                    // all quiet; leave it alone
+
+  const head = Math.round((sr * 20) / 1000);           // a hair of room tone
+  const tail = Math.round((sr * tailMs) / 1000);
+  const from = Math.max(0, start - head);
+  const to = Math.min(samples.length, end + tail);
+  const cut = samples.slice(from, to);
+
+  // Trimming rarely lands on a zero crossing, and a step into the first sample
+  // is a click. Three milliseconds of ramp is inaudible and removes it.
+  const ramp = Math.min(Math.round((sr * 3) / 1000), cut.length >> 1);
+  for (let i = 0; i < ramp; i++) {
+    const g = i / ramp;
+    cut[i] *= g;
+    cut[cut.length - 1 - i] *= g;
+  }
+  return cut;
+}
+
+async function speak(id, text, voice, tailMs = 180) {
   if (!engine) await load(null);
   const started = performance.now();
   let result;
@@ -127,9 +177,10 @@ async function speak(id, text, voice) {
   }
   proven = true;
   const { samples, sr } = pcm(result);
+  const cut = trim(samples, sr, tailMs);
   self.postMessage(
-    { type: "audio", id, samples, sr, ms: Math.round(performance.now() - started) },
-    [samples.buffer],
+    { type: "audio", id, samples: cut, sr, ms: Math.round(performance.now() - started) },
+    [cut.buffer],
   );
 }
 
@@ -140,7 +191,7 @@ self.onmessage = async ({ data }) => {
   const { type, id } = data;
   try {
     if (type === "load") await load(id);
-    else if (type === "speak") await speak(id, data.text, data.voice);
+    else if (type === "speak") await speak(id, data.text, data.voice, data.tailMs);
   } catch (err) {
     self.postMessage({ type: "error", id, message: err?.message || String(err) });
   }
