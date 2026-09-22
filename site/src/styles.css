@@ -86,6 +86,20 @@ html[data-first="onboard"] #gate { display: none; }
 }
 .onboard-card .btn { margin-top: 0; }
 .onboard-card .field { margin-bottom: 14px; padding: 14px 16px; }
+
+/* Two ways to spend the reader's data, stated plainly enough to choose from. */
+.choices { display: grid; gap: 10px; margin-bottom: 14px; }
+.choice {
+  display: block; width: 100%; text-align: left;
+  background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+  padding: 16px 18px; transition: border-color .12s, transform .12s;
+}
+.choice:hover { border-color: #c9c3f0; transform: scale(1.01); }
+.choice:active { transform: scale(0.99); }
+.choice[disabled] { opacity: .45; }
+.choice-t { display: block; font-weight: 600; font-size: 17px; }
+.choice-m { display: block; color: var(--muted); font-size: 14px; line-height: 1.35; margin-top: 3px; }
+.fine.soft { color: var(--muted); margin-top: 0; margin-bottom: 4px; font-size: 14px; }
 .onboard-card .fine { margin-top: 16px; color: #c0392b; font-size: 15px; }
 
 .progress { margin-bottom: 24px; }

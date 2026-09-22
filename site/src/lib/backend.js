@@ -40,6 +40,8 @@
  */
 
 /** Today's configuration: small, slow, and never wrong. */
+export const VOICE_PREF_KEY = "caseReader.voiceSize";
+
 const SAFE = { device: "wasm", dtype: "q8" };
 
 /** The 326MB model. Only worth asking someone to fetch over a fat pipe. */
@@ -95,11 +97,65 @@ async function gpu(nav) {
  * Every failure path lands on {wasm, q8}, which is what the site shipped
  * before this file existed.
  */
+const VALID = new Set(["big", "small"]);
+
+/**
+ * What the reader picked on the "save the voice" screen, if anything.
+ *
+ * Synchronous, and only meaningful on the main thread -- a worker has no
+ * localStorage at all, which is where pickBackend actually runs. Use
+ * storedPreference() for the answer that works in both places.
+ */
+export function voicePreference() {
+  try {
+    const v = localStorage.getItem(VOICE_PREF_KEY);
+    return VALID.has(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The choice, readable from a worker too. IndexedDB is the part they share. */
+export async function storedPreference() {
+  const local = voicePreference();
+  if (local) return local;
+  try {
+    const { metaGet } = await import("./db.js");
+    const v = await metaGet(VOICE_PREF_KEY);
+    return VALID.has(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Written to both stores, because only one of them reaches the worker. */
+export async function setVoicePreference(choice) {
+  try {
+    localStorage.setItem(VOICE_PREF_KEY, choice);
+  } catch {
+    /* Private browsing. IndexedDB below is the one that matters anyway. */
+  }
+  try {
+    const { metaSet } = await import("./db.js");
+    await metaSet(VOICE_PREF_KEY, choice);
+  } catch {
+    /* They will be asked again on the next device. Not worth failing over. */
+  }
+}
+
 export async function pickBackend(nav = navigator, isolated = globalThis.crossOriginIsolated) {
   try {
     const cores = nav.hardwareConcurrency || 1;
     const memory = nav.deviceMemory || 0;
-    const thrifty = metered(nav);
+    // An explicit choice outranks every guess about the machine. Someone who
+    // asked for the small model on a fast laptop has a reason -- a data cap
+    // the browser cannot see -- and someone who asked for the big one on a
+    // phone has already been shown what it costs.
+    const chosen = await storedPreference();
+    if (chosen === "small") {
+      return { ...SAFE, why: "you chose the smaller download" };
+    }
+    const thrifty = chosen === "big" ? false : metered(nav);
     // deviceMemory is Chromium-only, so silence is not smallness: Firefox on
     // a 16-core desktop reports nothing at all. Only a number we were given
     // and do not like counts against the machine.
@@ -114,7 +170,7 @@ export async function pickBackend(nav = navigator, isolated = globalThis.crossOr
 
     // Known-small memory rules out the big model on either device: the
     // download alone is a tenth of what such a machine has.
-    if (memory && memory < 4) {
+    if (chosen !== "big" && memory && memory < 4) {
       return { ...SAFE, why: `${memory}GB of memory; keeping the 92MB model` };
     }
 
@@ -132,7 +188,7 @@ export async function pickBackend(nav = navigator, isolated = globalThis.crossOr
     // faster there than the quantised models -- the int8 kernels cost more in
     // dequantisation than they save -- but it needs the cores to run the
     // threads on and the memory to hold 326MB of weights.
-    if (isolated && cores >= 8 && roomy) {
+    if (isolated && (chosen === "big" || (cores >= 8 && roomy))) {
       return {
         device: "wasm",
         dtype: "fp32",

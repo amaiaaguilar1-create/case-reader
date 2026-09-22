@@ -8,6 +8,7 @@ import {
   synthesize, voiceReady,
 } from "./lib/tts.js";
 import { remember, unlocked, verify } from "./lib/gate.js";
+import { setVoicePreference, voicePreference } from "./lib/backend.js";
 import {
   clearWord, hasPages, mount as mountPages, mounted as pagesMounted,
   paintSentence, paintWord, unmount as unmountPages,
@@ -628,13 +629,22 @@ async function addFile(file) {
 
 $("helloGo").onclick = () => showStep("voice");
 
-$("voiceGo").onclick = async () => {
-  const btn = $("voiceGo");
+/**
+ * Fetch the voice, having been told which one to fetch.
+ *
+ * The two sizes are 92MB and 326MB and the fast one is the big one, so this
+ * is the reader's call to make: a phone plan is not something the browser can
+ * see. `setVoicePreference` is read back by pickBackend inside the worker.
+ */
+async function saveVoice(choice) {
   const err = $("voiceErr");
+  await setVoicePreference(choice);
   err.hidden = true;
+  $("voiceChoices").hidden = true;
+  $("voiceHint").hidden = true;
   $("voiceProg").hidden = false;
-  btn.disabled = true;
-  btn.textContent = "Saving…";
+  const btn = $("voiceGo");
+  btn.hidden = true;
   try {
     await loadVoice(p => {
       $("voiceFill").style.width = `${Math.round(p * 100)}%`;
@@ -647,10 +657,16 @@ $("voiceGo").onclick = async () => {
   } catch {
     err.textContent = "That didn’t finish. Check your Wi‑Fi and try again. It only happens once.";
     err.hidden = false;
-    btn.disabled = false;
-    btn.textContent = "Try again";
+    $("voiceProg").hidden = true;
+    $("voiceChoices").hidden = false;
+    $("voiceHint").hidden = false;
   }
-};
+}
+
+$("voiceBig").onclick = () => saveVoice("big");
+$("voiceSmall").onclick = () => saveVoice("small");
+// Kept for anyone who reaches the step with a choice already stored.
+$("voiceGo").onclick = () => saveVoice(voicePreference() || "small");
 
 $("sampleGo").onclick = async () => {
   const doc = buildDocument(SAMPLE.title, SAMPLE.text);

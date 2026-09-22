@@ -53,7 +53,18 @@
         <div class="progress-track"><i id="voiceFill"></i></div>
         <p class="progress-label" id="voiceLabel">Getting the voice ready…</p>
       </div>
-      <button class="btn" id="voiceGo" type="button">Save the voice</button>
+      <div class="choices" id="voiceChoices">
+        <button class="choice" id="voiceBig" type="button">
+          <span class="choice-t">Best quality</span>
+          <span class="choice-m">326 MB &middot; reads far faster than you can listen, so it keeps up at 2&times; speed</span>
+        </button>
+        <button class="choice" id="voiceSmall" type="button">
+          <span class="choice-t">Smaller download</span>
+          <span class="choice-m">92 MB &middot; a quarter of the data, and still keeps up at 2&times; on a computer</span>
+        </button>
+      </div>
+      <p class="fine soft" id="voiceHint">On a phone plan, take the smaller one. You can change this later by clearing the site&rsquo;s data.</p>
+      <button class="btn" id="voiceGo" type="button" hidden>Save the voice</button>
       <p class="fine" id="voiceErr" hidden></p>
     </div>
 
