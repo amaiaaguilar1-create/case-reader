@@ -185,6 +185,37 @@ test("pressing play in a new document does not resume the old one", async () => 
   expect(playing().map(a => a.src)).not.toContain(alpha.src);
 });
 
+test("packs that come back out of order are still played in order", async () => {
+  await open("Alpha");
+  $("play").click();
+  await settle();
+  await releaseNext();                         // the opening mouthful
+  const first = playing()[0];
+  expect(first).toBeTruthy();
+
+  // Several packs are being made side by side -- that is the whole point of a
+  // pool -- so they can finish in any order.
+  const waiting = clips.filter(c => !c.done);
+  expect(waiting.length).toBeGreaterThan(1);
+
+  // The one further down the document answers first. Nothing may play it yet:
+  // there is speech in between that nobody has heard.
+  waiting[1].done = true;
+  waiting[1].release();
+  await settle();
+  expect(playing()).toEqual([first]);
+
+  waiting[0].done = true;
+  waiting[0].release();
+  await settle();
+  first.ended = true;
+  first.paused = true;
+  first.onended();
+  await settle();
+  expect(playing()).toHaveLength(1);
+  expect(playing()[0].src).toBe(`blob:${clips.indexOf(waiting[0])}`);
+});
+
 test("reading on plays the pack already in hand, and asks for nothing twice", async () => {
   await open("Alpha");
   $("play").click();

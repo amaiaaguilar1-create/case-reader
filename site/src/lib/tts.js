@@ -1,3 +1,4 @@
+import { pickBackend, workerBudget } from "./backend.js";
 import { speakable } from "./speak.js";
 import { estimateWordTimings } from "./timing.js";
 import { packForSpeech } from "./chunker.js";
@@ -18,73 +19,212 @@ export const SOON = 1;       // a guess: a document that is open but silent
 const HOUSEKEEPING = 2;      // warm-up, nobody is waiting
 
 const cache = new Map();
-const pending = new Map();
-let worker = null;
 let ready = false;
 let onProgressNow = () => {};
 let seq = 0;
 
-function boot() {
-  if (worker) return worker;
-  worker = new Worker(new URL("./tts.worker.js", import.meta.url), { type: "module" });
-  worker.onmessage = ({ data }) => {
+/**
+ * The pool.
+ *
+ * One worker synthesises at about 0.93x real time, so 2x playback outruns it
+ * by a second per second and no amount of banking ahead can cover a deficit
+ * that grows. Packs are independent -- each is its own text-to-audio call --
+ * so several can be made at once. They do not scale linearly, because ONNX
+ * already runs several WASM threads inside each worker and they share the same
+ * cores: measured on a 12-core M2 Max, one to four workers made 1.02x, 1.94x,
+ * 2.83x and 2.94x real time, so the third worker is the last one worth having
+ * and each costs another copy of the model in memory. How many to run is the
+ * backend's call, since it depends on where inference happens.
+ */
+const pool = [];
+let chosen = null;
+let probing = null;
+
+/**
+ * Ask the backend how many workers it wants.
+ *
+ * pickBackend is async -- it has to ask for a WebGPU adapter, and on the CPU
+ * path it reads the reader's download choice out of IndexedDB. So the answer
+ * is not available at the moment the first pack is requested. Start at one
+ * worker, which is what we would build anyway (the pool grows behind the
+ * first completed pack, since loading a second copy of the model wants the
+ * cores the first pack is using), and widen once the probe lands.
+ */
+function resolveBudget() {
+  if (probing) return probing;
+  probing = Promise.resolve()
+    .then(() => pickBackend())
+    .then(backend => {
+      chosen = backend;
+      // The probe can land after the pack that would have widened the pool has
+      // already finished, and grow() only retries on the next one. Retry here
+      // so the pool cannot be left at one worker by timing alone.
+      if (lastVoice) grow(lastVoice);
+      pump();
+    })
+    .catch(() => { chosen = chosen || {}; });
+  return probing;
+}
+
+/**
+ * How many workers to run.
+ *
+ * The backend is cached, the count is not: workerBudget is a pure function of
+ * the backend, so deriving it on each call costs nothing and cannot go stale.
+ * Until the probe lands this is one, which is what we would build anyway --
+ * the pool grows behind the first completed pack, because loading a second
+ * copy of the model wants the cores the first pack is using.
+ */
+function poolSize() {
+  if (!chosen) {
+    resolveBudget();
+    return 1;
+  }
+  return Math.max(1, Math.min(8, Math.round(workerBudget(chosen)) || 1));
+}
+
+/** The worker in slot `i`, started if it is not running yet. */
+function slot(i) {
+  if (pool[i]) return pool[i];
+  const s = {
+    worker: new Worker(new URL("./tts.worker.js", import.meta.url), { type: "module" }),
+    busy: false, guess: false, loaded: false, pending: new Map(),
+  };
+  s.worker.onmessage = ({ data }) => {
     if (data.type === "progress") {
       report(data.ev);
       return;
     }
-    const slot = pending.get(data.id);
-    if (!slot) return;
-    pending.delete(data.id);
-    if (data.type === "error") slot.reject(new Error(data.message));
-    else slot.resolve(data);
+    const waiting = s.pending.get(data.id);
+    if (!waiting) return;
+    s.pending.delete(data.id);
+    if (data.type === "error") waiting.reject(new Error(data.message));
+    else waiting.resolve(data);
   };
-  worker.onerror = e => {
+  s.worker.onerror = e => {
     const err = new Error(e.message || "The voice stopped unexpectedly.");
-    for (const slot of pending.values()) slot.reject(err);
-    pending.clear();
-    worker = null;
-    ready = false;
+    for (const waiting of s.pending.values()) waiting.reject(err);
+    s.pending.clear();
+    // Retire this one and read on with the rest: a worker that dies partway
+    // through a pack should cost that pack, not the whole voice.
+    pool[i] = null;
+    s.worker.terminate?.();
+    if (i === 0) ready = false;
+    pump();
   };
-  return worker;
+  pool[i] = s;
+  return s;
 }
 
-function ask(message, transfer = []) {
+function ask(s, message, transfer = []) {
   const id = ++seq;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject });
-    boot().postMessage({ ...message, id }, transfer);
+    s.pending.set(id, { resolve, reject });
+    s.worker.postMessage({ ...message, id }, transfer);
   });
 }
 
 /**
- * The queue of work waiting for the worker.
+ * The queue of work waiting for a worker.
  *
- * Inference cannot be interrupted once it has started and the worker takes
- * requests one at a time, so arrival order is the only order it knows. That
+ * Inference cannot be interrupted once it has started and each worker takes
+ * one request at a time, so arrival order is the only order they know. That
  * made a guess about a document nobody has opened sit in front of the words
  * someone is waiting for. Here a job can still be reordered or thrown away,
  * which is everything we can usefully control.
  */
 const queue = [];
-let busy = false;
 
 function enqueue(job) {
   queue.push(job);
   pump();
 }
 
+/**
+ * Hand queued work to whatever workers are free.
+ *
+ * Lowest priority number first and arrival order within a priority: packs are
+ * asked for in the order they will be heard, so among equals first-in is the
+ * order that keeps the queue moving forwards.
+ *
+ * Whenever there are two or more workers, one is kept off speculative work.
+ * A guess runs a full pack -- ten seconds or so -- and cannot be recalled, so
+ * a pool with every worker guessing would make the reader wait that long for
+ * a place we guessed wrong about. With one worker there is nothing to hold
+ * back and the rule does not bite.
+ */
 function pump() {
-  if (busy || !queue.length) return;
-  let at = 0;
-  for (let i = 1; i < queue.length; i++) {
-    if (queue[i].priority < queue[at].priority) at = i;
+  for (;;) {
+    const free = pool.find(s => s && s.loaded && !s.busy);
+    if (!free || !queue.length) return;
+    const room = Math.max(1, pool.filter(s => s?.loaded).length - 1)
+      - pool.filter(s => s?.busy && s.guess).length;
+    let at = -1;
+    for (let i = 0; i < queue.length; i++) {
+      if (queue[i].priority > NOW && room <= 0) continue;
+      if (at < 0 || queue[i].priority < queue[at].priority) at = i;
+    }
+    if (at < 0) return;
+    run(free, queue.splice(at, 1)[0]);
   }
-  const job = queue.splice(at, 1)[0];
-  busy = true;
+}
+
+let lastVoice = null;
+function run(s, job) {
+  lastVoice = job.voice;
+  s.busy = true;
+  s.guess = job.priority > NOW;
   job.started = true;
-  ask({ type: "speak", text: job.text, voice: job.voice })
+  ask(s, { type: "speak", text: job.text, voice: job.voice })
     .then(job.resolve, job.reject)
-    .finally(() => { busy = false; pump(); });
+    .finally(() => {
+      s.busy = false;
+      s.guess = false;
+      grow(job.voice);
+      pump();
+    });
+}
+
+/**
+ * Bring the rest of the pool up, one worker at a time, behind the first pack.
+ *
+ * Each worker loads its own copy of the model and compiles its own WASM
+ * kernels: seconds of work, and all of it wants the cores the first pack is
+ * using. Growing behind that pack -- and never two workers at once -- keeps
+ * time-to-first-word where it was while the pool fills in for everything after
+ * it.
+ */
+let live = 1;
+let growing = false;
+async function grow(voice) {
+  if (growing || live >= poolSize()) return;
+  growing = true;
+  try {
+    while (live < poolSize()) {
+      const i = live++;
+      const s = slot(i);
+      try {
+        await ask(s, { type: "load" });
+        s.loaded = true;
+        await warm(s, voice);
+      } catch {
+        pool[i] = null;
+        return;
+      }
+    }
+  } finally {
+    growing = false;
+  }
+}
+
+/** Compile a fresh worker's kernels on a throwaway phrase before real work
+ *  lands on it; see `warmUp`. Marked busy from the start so `pump` cannot
+ *  hand it a pack that would then queue behind this. */
+function warm(s, voice) {
+  s.busy = true;
+  return ask(s, { type: "speak", text: "Ready.", voice })
+    .catch(() => {})
+    .finally(() => { s.busy = false; pump(); });
 }
 
 /**
@@ -154,10 +294,23 @@ export async function loadVoice(onProgress = () => {}, voice = DEFAULT_VOICE) {
     return;
   }
   if (!loading) {
-    loading = ask({ type: "load" }).finally(() => { loading = null; });
+    // Probe alongside the download rather than after it: the pool checks its
+    // size the moment the first pack lands, and a backend that is still
+    // unknown then reads as "one worker is enough".
+    //
+    // Deliberately a fresh probe. Anything that touched the pool earlier
+    // probed before the reader chose their download size, and the two models
+    // want different numbers of workers -- three for the 92MB one, two for
+    // the 326MB one. This is the first moment that choice is final.
+    probing = null;
+    const probe = resolveBudget();
+    loading = ask(slot(0), { type: "load" })
+      .then(async done => { await probe; return done; })
+      .finally(() => { loading = null; });
   }
   try {
     const done = await loading;
+    if (pool[0]) pool[0].loaded = true;
     ready = true;
     if (!done.threads) {
       // Without cross-origin isolation ONNX runs on one core. The service
@@ -165,10 +318,11 @@ export async function loadVoice(onProgress = () => {}, voice = DEFAULT_VOICE) {
       console.info("Case Reader: voice is running single-threaded.");
     }
     onProgress(1);
+    pump();
     // Only warm when nothing is waiting: if a pack is already queued, that
     // pack is what the worker should be doing.
     setTimeout(() => {
-      if (!queue.length && !busy) warmUp(voice).catch(() => {});
+      if (!queue.length && !pool.some(s => s?.busy)) warmUp(voice).catch(() => {});
     }, 50);
   } finally {
     onProgressNow = () => {};

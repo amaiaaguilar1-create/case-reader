@@ -61,6 +61,9 @@ const state = {
   clips: new Set(),
   durations: new Map(),
   raf: 0,
+  // When the queue was last topped up. The check is cheap but it runs off the
+  // highlight loop, which is every frame.
+  lastAhead: 0,
 };
 
 function toast(msg) {
@@ -343,19 +346,37 @@ function highlightLoop() {
   if (sent !== state.sent) { state.sent = sent; markSentence(); }
   setWord(local);
   updateTime();
+  // Top the queue up as it drains, rather than only when a pack ends.
+  // Pressing 2x halves what the speech in hand is worth in listening time, and
+  // the end of the current pack is the latest possible moment to notice.
+  const now = performance.now();
+  if (now - state.lastAhead > 250) {
+    state.lastAhead = now;
+    runAhead(state.doc?.id);
+  }
 }
 
-// Synthesis runs at roughly real time -- measured at 0.93x on a 12-core Mac,
-// and near enough the same whether the pack is five seconds of speech or
-// thirteen. Two things follow. A pack can only be about seven percent longer
-// than the speech already in hand, or it is still being made when the reader
-// reaches the end of the queue and hears silence. And the wait before the
-// first word is almost exactly the length of the first pack, which is why the
-// opening is a few seconds of speech and no more, even when that means
-// stopping partway through a long sentence.
+// One pack takes about as long to make as it takes to hear -- 0.93x real time
+// on a 12-core Mac, and near enough the same whether the pack is five seconds
+// of speech or thirteen. Two things follow, and neither is changed by making
+// several packs at once. A pack can only be a little longer than the speech
+// already in hand, or it is still being made when the reader reaches the end
+// of the queue and hears silence. And the wait before the first word is almost
+// exactly the length of the first pack, which is why the opening is a few
+// seconds of speech and no more, even when that means stopping partway through
+// a long sentence.
 const FIRST_CHARS = 44;
 const PACK_CHARS = 170;
 const OPENING_BANK = 26;
+
+// How far ahead to keep speech made, in seconds of listening -- so at 2x it is
+// twice as much speech. What the pool buys is the room to hold a bank this
+// deep; the bank is what absorbs a pack that comes back slower than the one
+// before it. Every pack in it is a WAV in memory, about half a megabyte for
+// ten seconds of speech, so the cap on how many are out at once is what keeps
+// a long document from banking megabytes nobody will hear.
+const HORIZON = 30;
+const MAX_AHEAD = 8;
 
 const ease = (was, now) => was + 0.4 * (now - was);
 // How fast this voice speaks, guessed low: a pack that comes out shorter than
@@ -470,17 +491,27 @@ async function prefetchOpening(docId) {
     try { await loadVoice(); } catch { return; }
     if (state.doc?.id !== docId || state.playing) return;
   }
-  let sent = nextReadable(state.sent, 1), word = 0, made = 0;
-  for (let i = 0; i < 5 && sent >= 0 && made < OPENING_BANK; i++) {
-    if (state.doc?.id !== docId || state.playing) return;
-    const limit = i ? packLimit(made) : FIRST_CHARS;
-    let chunk;
-    try { chunk = await fetchChunk(sent, word, limit, { priority: SOON, tag }); }
-    catch { return; }
-    if (state.doc?.id !== docId) return;
-    made += chunk.duration;
-    word = chunk.thruWord;
-    sent = word ? chunk.through : nextReadable(chunk.through + 1, 1);
+  let sent = nextReadable(state.sent, 1);
+  if (sent < 0) return;
+  // The opening mouthful on its own first. It is the one the reader waits for
+  // if they press play now, and the pool must not have it queued behind the
+  // guesses that follow it.
+  let chunk;
+  try { chunk = await fetchChunk(sent, 0, FIRST_CHARS, { priority: SOON, tag }); }
+  catch { return; }
+  if (state.doc?.id !== docId || state.playing) return;
+  let made = chunk.duration, word = chunk.thruWord;
+  sent = word ? chunk.through : nextReadable(chunk.through + 1, 1);
+  // The rest go out together rather than one behind the next, so that a pool
+  // has something for every worker while the document sits open and silent.
+  for (let i = 1; i < 6 && sent >= 0 && made < OPENING_BANK; i++) {
+    const limit = packLimit(made);
+    const pack = packFrom(state.doc.sentences, sent, limit, word);
+    if (!pack.ids.length) return;
+    fetchChunk(sent, word, limit, { priority: SOON, tag }).catch(() => {});
+    made += pack.text.length / state.charsPerSec;
+    word = pack.thruWord;
+    sent = word ? pack.through : nextReadable(pack.through + 1, 1);
   }
 }
 
@@ -542,20 +573,42 @@ async function playSentence(sentId, continuing = false, fromWord = 0) {
   state.nextAt = chunk.to;
   setPlayIcon("pause");
   savePosition(state.doc.id, state.sent).catch(() => {});
-  // Keep two packs in hand, so a slow machine still reads without gaps. Each
-  // is sized when it is asked for, against the speech in hand at that moment.
-  if (onSent >= 0) keepAhead(onSent, onWord, docId, 2);
+  state.lastAhead = performance.now();
+  runAhead(docId);
   highlightLoop();
 }
 
-/** Make the next `depth` packs, each as long as the queue can afford. */
-function keepAhead(sentId, fromWord, docId, depth) {
-  const limit = limitFor(at(sentId, fromWord));
-  fetchChunk(sentId, fromWord, limit, { tag: String(docId) }).then(next => {
-    if (state.doc?.id !== docId) return;
-    const on = next.thruWord ? next.through : nextReadable(next.through + 1, 1);
-    if (depth > 1 && on >= 0) keepAhead(on, next.thruWord, docId, depth - 1);
-  }).catch(() => {});
+/**
+ * Ask for everything the next `HORIZON` seconds of listening needs.
+ *
+ * Walks forward from where playback will pick up, sizing each pack against
+ * what the bank will hold by the time it is reached and asking for the ones
+ * nobody has asked for yet. It has to be a walk, not a chain: the old version
+ * asked for the next pack only once the last one came back, so however many
+ * workers there were, at most one was ever busy. Packs are worked out from
+ * `packFrom`, which is pure, so the walk can run ahead of the audio that does
+ * not exist yet.
+ *
+ * A pack still being made counts at the length its text predicts. That is what
+ * sizes the pack after it, and it is why a slow pack shrinks its successors
+ * instead of being followed by one that is even later.
+ */
+function runAhead(docId) {
+  if (!state.doc || state.doc.id !== docId) return;
+  const a = state.audio;
+  let bank = a && !a.paused && a.duration ? Math.max(0, a.duration - a.currentTime) : 0;
+  let [sentId, word] = state.nextAt.split("+").map(Number);
+  for (let i = 0; i < MAX_AHEAD && sentId >= 0 && bank / state.speed < HORIZON; i++) {
+    const pos = at(sentId, word);
+    const claimed = state.ahead.get(pos);
+    const limit = claimed?.limit ?? packLimit(bank / state.speed);
+    const pack = packFrom(state.doc.sentences, sentId, limit, word);
+    if (!pack.ids.length) return;
+    if (!claimed) fetchChunk(sentId, word, limit, { tag: String(docId) }).catch(() => {});
+    bank += claimed?.duration || pack.text.length / state.charsPerSec;
+    word = pack.thruWord;
+    sentId = word ? pack.through : nextReadable(pack.through + 1, 1);
+  }
 }
 
 /** Silence every clip, not just the current one: a pending request may have

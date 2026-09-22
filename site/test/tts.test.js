@@ -1,18 +1,27 @@
 /**
- * What the worker is given, and in what order.
+ * What the workers are given, and in what order.
  *
- * The worker does one inference at a time and cannot be interrupted, so
+ * Each worker does one inference at a time and cannot be interrupted, so
  * everything that matters happens before a request is sent: work the reader is
- * waiting for goes first, and a guess about a document they have turned away
- * from is thrown out rather than made.
+ * waiting for goes first, a guess about a document they have turned away from
+ * is thrown out rather than made, and with several workers a guess never takes
+ * the last free one.
  */
 import { beforeEach, expect, test, vi } from "vitest";
+
+/** How many workers the backend asks for; a test sets it before it grows. */
+let workers = 1;
+vi.mock("../src/lib/backend.js", () => ({
+  pickBackend: () => "wasm",
+  workerBudget: () => workers,
+}));
 
 /** Stands in for the Web Worker: records what it is asked, answers on demand. */
 class FakeWorker {
   constructor() {
     this.asked = [];
     FakeWorker.last = this;
+    FakeWorker.all.push(this);
   }
   postMessage(msg) { this.asked.push(msg); }
   /** Answer the oldest unanswered request. */
@@ -27,13 +36,34 @@ class FakeWorker {
     }
     return msg;
   }
+  busy() { return this.asked.some(m => m.type === "speak" && !m.answered); }
   spoken() { return this.asked.filter(m => m.type === "speak").map(m => m.text); }
 }
 
 const settle = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
 let tts;
 
+/** Every worker with a pack in it right now. */
+const working = () => FakeWorker.all.filter(w => w.busy());
+
+/**
+ * Bring the pool up to its full size.
+ *
+ * A worker joins by loading the model and saying a throwaway phrase, and they
+ * come up one at a time, so answering in that order is what grows the pool.
+ */
+async function fillPool() {
+  for (let i = 1; i < workers; i++) {
+    FakeWorker.all[i].reply();          // the model
+    await settle();
+    FakeWorker.all[i].reply();          // the warm-up phrase
+    await settle();
+  }
+}
+
 beforeEach(async () => {
+  workers = 1;
+  FakeWorker.all = [];
   globalThis.Worker = FakeWorker;
   globalThis.URL.createObjectURL = () => "blob:clip";
   globalThis.Blob = class {};
@@ -100,4 +130,55 @@ test("a guess the reader starts waiting for moves up the queue", async () => {
   expect(worker.spoken().at(-1)).toBe("guessed at");
   worker.reply();
   await guessed;
+});
+
+/** Grow the pool: one pack through the first worker is what starts it. */
+async function startPool() {
+  const first = tts.synthesize("the first pack", [], "af_heart", { tag: "a" });
+  await settle();
+  FakeWorker.all[0].reply();
+  await first;
+  await settle();
+  await fillPool();
+}
+
+test("a pool makes several packs at once, and the rest wait their turn", async () => {
+  workers = 3;
+  await startPool();
+  expect(FakeWorker.all).toHaveLength(3);
+
+  const packs = ["two", "three", "four", "five"]
+    .map(t => tts.synthesize(t, [], "af_heart", { tag: "a" }));
+  await settle();
+  // Three in flight, one held back: the pool is the whole of the limit.
+  expect(working()).toHaveLength(3);
+  expect(FakeWorker.all.flatMap(w => w.spoken()).filter(t => t === "five")).toHaveLength(0);
+
+  // They come back in whatever order they finish -- the last one first here.
+  FakeWorker.all[2].reply();
+  await settle();
+  expect(FakeWorker.all[2].spoken().at(-1)).toBe("five");
+  for (const w of FakeWorker.all) while (w.busy()) { w.reply(); await settle(); }
+  const made = await Promise.all(packs);
+  expect(made).toHaveLength(4);
+});
+
+test("a guess never takes the last free worker", async () => {
+  workers = 3;
+  await startPool();
+  const guesses = ["a guess", "another guess", "a third guess"]
+    .map(t => tts.synthesize(t, [], "af_heart", { priority: tts.SOON, tag: "a" }).catch(() => {}));
+  await settle();
+  expect(working()).toHaveLength(2);          // one worker held in reserve
+
+  // So the words someone is waiting for start now, not in ten seconds' time.
+  const wanted = tts.synthesize("what they asked for", [], "af_heart", { tag: "b" });
+  await settle();
+  expect(working()).toHaveLength(3);
+  const free = FakeWorker.all.find(w => w.spoken().at(-1) === "what they asked for");
+  expect(free).toBeTruthy();
+  free.reply();
+  await wanted;
+  for (const w of FakeWorker.all) while (w.busy()) { w.reply(); await settle(); }
+  await Promise.all(guesses);
 });
