@@ -5,7 +5,7 @@ import {
 } from "./lib/db.js";
 import {
   DEFAULT_VOICE, MIDWAY_TAIL_MS, NOW, SENTENCE_TAIL_MS, SOON, VOICES,
-  dropGuesses, loadVoice, packFrom, raise, synthesize, voiceReady,
+  dropGuesses, loadVoice, packFrom, raise, ratioHint, synthesize, voiceReady,
 } from "./lib/tts.js";
 import { remember, unlocked, verify } from "./lib/gate.js";
 import { setVoicePreference, voicePreference } from "./lib/backend.js";
@@ -54,6 +54,8 @@ const state = {
   // voice and the machine rather than a guess made on one laptop.
   charsPerSec: 14,
   ratio: 0.95,
+  // False until a pack has actually been timed on this machine.
+  measured: false,
   // Every play request takes the next number. Anything that resumes after an
   // await checks it still holds the current one, so an older request that was
   // waiting on synthesis cannot start speaking over the new one.
@@ -365,8 +367,21 @@ function highlightLoop() {
 // exactly the length of the first pack, which is why the opening is a few
 // seconds of speech and no more, even when that means stopping partway through
 // a long sentence.
+// Cutting a sentence in half is not just a pause in the wrong place: Kokoro
+// gives the fragment a falling, finished-sounding cadence, and the next pack
+// starts again from cold. So the ceiling is the chunker's own sentence limit
+// -- whole sentences whenever the machine can afford them -- and packLimit
+// below is what decides whether it can. A slow backend still gets small packs
+// and still splits; a fast one never has to.
 const FIRST_CHARS = 44;
-const PACK_CHARS = 170;
+const PACK_CHARS = 260;
+// Below this the machine is too slow to make a whole sentence promptly, so a
+// fragment is the better trade; above it, sentences are never cut.
+const SPLIT_BELOW = 90;
+// How long to spend making the first pack before the reader hears anything.
+// On a GPU that buys a whole sentence; on a slow CPU it collapses to
+// FIRST_CHARS and the opening is a fragment, which is the right trade there.
+const OPENING_COMPUTE = 1.5;
 // Seconds of *speech* to have in hand before the reader presses play. It is
 // spent at the playback speed, so at 2x this much speech is half as much
 // listening -- scale it, or a document opened at 2x starts with half the
@@ -419,8 +434,17 @@ function banked() {
  * little under the ceiling; with nothing in hand the pack gets the floor.
  */
 function packLimit(seconds) {
-  const room = seconds * 0.96 / state.ratio;
-  return Math.max(FIRST_CHARS,
+  // Before anything has been timed, ask the backend what to expect: the
+  // pessimistic default would cut the first sentence in half on a GPU to save
+  // a second that was never going to be spent.
+  const ratio = state.measured ? state.ratio : (ratioHint() ?? state.ratio);
+  const room = seconds * 0.96 / ratio;
+  // With nothing banked the pack is sized by what we will wait for, not by
+  // what is in hand -- otherwise the opening is always the bare floor, even
+  // on a backend that could have made a whole sentence in the same moment.
+  const floor = Math.min(PACK_CHARS, Math.max(FIRST_CHARS,
+    Math.round(OPENING_COMPUTE * state.charsPerSec / ratio)));
+  return Math.max(floor,
     Math.min(PACK_CHARS, Math.round(room * state.charsPerSec)));
 }
 
@@ -437,7 +461,8 @@ async function fetchChunk(sentId, fromWord, limit, opts = {}) {
   const key = `${sentId}+${fromWord}|${state.voice}|${limit}`;
   let slot = state.chunkCache.get(key);
   if (!slot) {
-    const pack = packFrom(state.doc.sentences, sentId, limit, fromWord);
+    const pack = packFrom(state.doc.sentences, sentId, limit, fromWord,
+      limit < SPLIT_BELOW);
     // A pack that stopped partway through a sentence is carried straight on by
     // the next one, so it must not end on a pause. One that finished a
     // sentence should breathe before the next begins.
@@ -465,7 +490,13 @@ async function makeChunk(pack, sentId, fromWord, key, opts) {
   for (const id of pack.ids.slice(1)) state.durations.set(id, 0);
   if (clip.duration > 0) {
     state.charsPerSec = guessLow(state.charsPerSec, pack.text.length / clip.duration);
-    if (clip.ms) state.ratio = ease(state.ratio, clip.ms / 1000 / clip.duration);
+    if (clip.ms) {
+      const seen = clip.ms / 1000 / clip.duration;
+      // Take the first real timing whole. Easing from a guess that may be
+      // eight times wrong just spreads the error over the next few packs.
+      state.ratio = state.measured ? ease(state.ratio, seen) : seen;
+      state.measured = true;
+    }
   }
   const el = new Audio(clip.url);
   el.preload = "auto";
@@ -505,8 +536,12 @@ async function prefetchOpening(docId) {
   // The opening mouthful on its own first. It is the one the reader waits for
   // if they press play now, and the pool must not have it queued behind the
   // guesses that follow it.
+  // Sized like any other opening pack, not pinned to the floor: on a backend
+  // that can make a whole sentence in a second and a half, asking for 44
+  // characters buys nothing and cuts the first sentence in half.
   let chunk;
-  try { chunk = await fetchChunk(sent, 0, FIRST_CHARS, { priority: SOON, tag }); }
+  const opening = packLimit(0);
+  try { chunk = await fetchChunk(sent, 0, opening, { priority: SOON, tag }); }
   catch { return; }
   if (state.doc?.id !== docId || state.playing) return;
   let made = chunk.duration, word = chunk.thruWord;
@@ -515,7 +550,8 @@ async function prefetchOpening(docId) {
   // has something for every worker while the document sits open and silent.
   for (let i = 1; i < 10 && sent >= 0 && made < openingBank(); i++) {
     const limit = packLimit(made);
-    const pack = packFrom(state.doc.sentences, sent, limit, word);
+    const pack = packFrom(state.doc.sentences, sent, limit, word,
+      limit < SPLIT_BELOW);
     if (!pack.ids.length) return;
     fetchChunk(sent, word, limit, { priority: SOON, tag }).catch(() => {});
     made += pack.text.length / state.charsPerSec;
@@ -611,7 +647,8 @@ function runAhead(docId) {
     const pos = at(sentId, word);
     const claimed = state.ahead.get(pos);
     const limit = claimed?.limit ?? packLimit(bank / state.speed);
-    const pack = packFrom(state.doc.sentences, sentId, limit, word);
+    const pack = packFrom(state.doc.sentences, sentId, limit, word,
+      limit < SPLIT_BELOW);
     if (!pack.ids.length) return;
     if (!claimed) fetchChunk(sentId, word, limit, { tag: String(docId) }).catch(() => {});
     bank += claimed?.duration || pack.text.length / state.charsPerSec;

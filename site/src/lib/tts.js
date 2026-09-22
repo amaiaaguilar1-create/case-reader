@@ -268,6 +268,20 @@ function report(ev) {
   else if (ev.status === "ready" || ev.status === "done") onProgressNow(1);
 }
 
+/**
+ * A first guess at how long speech takes to make, before any has been made.
+ *
+ * Without this the opening pack is sized as though every machine were the
+ * slowest one -- which on a GPU means cutting the first sentence in half to
+ * save a second that was never going to be spent. Measured ratios replace it
+ * as soon as the first pack comes back.
+ */
+export function ratioHint() {
+  if (!chosen) return null;
+  if (chosen.device === "webgpu") return 0.12;
+  return chosen.dtype === "fp32" ? 0.65 : 1.05;
+}
+
 export function voiceReady() {
   return ready;
 }
@@ -426,10 +440,14 @@ function cutAt(sent, fromWord, limit) {
  * starts sooner, then grow packs back to full size while the reader is already
  * listening. `thruWord` is where to pick up: 0 means the sentence is finished.
  */
-export function packFrom(sentences, startId, limit, fromWord = 0) {
+export function packFrom(sentences, startId, limit, fromWord = 0, allowSplit = true) {
   const head = sentences.find(s => s.id === startId);
   if (!head) return { ids: [], text: "", words: [], parts: [], through: startId, thruWord: 0 };
-  const end = cutAt(head, fromWord, limit);
+  // Cutting mid-sentence is a last resort: the fragment gets a falling,
+  // finished cadence and the next pack starts again from cold. It is only
+  // worth it when the machine is too slow to make a whole sentence before the
+  // reader gives up waiting.
+  const end = allowSplit ? cutAt(head, fromWord, limit) : head.words.length;
   if (end < head.words.length) {
     const words = head.words.slice(fromWord, end);
     return {
