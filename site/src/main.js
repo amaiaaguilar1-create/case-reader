@@ -367,7 +367,12 @@ function highlightLoop() {
 // a long sentence.
 const FIRST_CHARS = 44;
 const PACK_CHARS = 170;
+// Seconds of *speech* to have in hand before the reader presses play. It is
+// spent at the playback speed, so at 2x this much speech is half as much
+// listening -- scale it, or a document opened at 2x starts with half the
+// cushion one opened at 1x gets, and pays for it at the first boundary.
 const OPENING_BANK = 26;
+const openingBank = () => OPENING_BANK * Math.max(1, state.speed);
 
 // How far ahead to keep speech made, in seconds of listening -- so at 2x it is
 // twice as much speech. What the pool buys is the room to hold a bank this
@@ -504,7 +509,7 @@ async function prefetchOpening(docId) {
   sent = word ? chunk.through : nextReadable(chunk.through + 1, 1);
   // The rest go out together rather than one behind the next, so that a pool
   // has something for every worker while the document sits open and silent.
-  for (let i = 1; i < 6 && sent >= 0 && made < OPENING_BANK; i++) {
+  for (let i = 1; i < 10 && sent >= 0 && made < openingBank(); i++) {
     const limit = packLimit(made);
     const pack = packFrom(state.doc.sentences, sent, limit, word);
     if (!pack.ids.length) return;
