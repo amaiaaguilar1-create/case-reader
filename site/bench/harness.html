@@ -1,0 +1,12 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Kokoro backend benchmark</title>
+<!--
+  A page with no app on it: the gate, the PDF, the scheduler and the audio
+  element all cost time that has nothing to do with inference. Here one module
+  loads the model and speaks, and the driver in bench.js reads the numbers off
+  window.__bench.
+-->
+<body>
+<pre id="log">loading...</pre>
+<script type="module" src="./harness.js"></script>
