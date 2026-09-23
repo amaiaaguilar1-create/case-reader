@@ -66,12 +66,17 @@ async function build(chosen) {
  * So a failure here is reported as progress rather than as an error, and the
  * configuration the site shipped with is tried instead.
  */
-async function load(id) {
+async function load(id, force = false) {
   if (engine) {
     self.postMessage({ type: "loaded", id, threads: self.crossOriginIsolated, backend });
     return;
   }
-  const chosen = await pickBackend();
+  // `force` means an earlier worker was built with the picked backend and
+  // then stopped answering -- WebKit does this: it hands out a WebGPU adapter
+  // and hangs inside inference, with nothing thrown to catch. Do not probe
+  // again, just take the configuration that cannot hang.
+  const chosen = force ? { ...SAFE, why: "the faster backend stopped responding" }
+    : await pickBackend();
   self.postMessage({ type: "progress", ev: { status: "backend", name: `${chosen.device}/${chosen.dtype}`, why: chosen.why } });
   try {
     engine = await build(chosen);
@@ -162,7 +167,7 @@ function trim(samples, sr, tailMs) {
 }
 
 async function speak(id, text, voice, tailMs = 180) {
-  if (!engine) await load(null);
+  if (!engine) await load(null, false);
   const started = performance.now();
   let result;
   try {
@@ -190,7 +195,7 @@ async function speak(id, text, voice, tailMs = 180) {
 self.onmessage = async ({ data }) => {
   const { type, id } = data;
   try {
-    if (type === "load") await load(id);
+    if (type === "load") await load(id, data.force);
     else if (type === "speak") await speak(id, data.text, data.voice, data.tailMs);
   } catch (err) {
     self.postMessage({ type: "error", id, message: err?.message || String(err) });

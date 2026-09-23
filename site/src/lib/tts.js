@@ -39,6 +39,11 @@ let seq = 0;
  * and each costs another copy of the model in memory. How many to run is the
  * backend's call, since it depends on where inference happens.
  */
+const FELL_BACK = "This browser could not run the fast voice, so Case Reader "
+  + "switched to the standard one. Reading may not keep up above normal speed; "
+  + "Chrome is faster here.";
+let forceSafe = false;
+
 const pool = [];
 let chosen = null;
 let probing = null;
@@ -104,25 +109,77 @@ function slot(i) {
     if (data.type === "error") waiting.reject(new Error(data.message));
     else waiting.resolve(data);
   };
-  s.worker.onerror = e => {
-    const err = new Error(e.message || "The voice stopped unexpectedly.");
+  /**
+   * Throw this worker away.
+   *
+   * `silent` means it answered nothing at all rather than failing: then the
+   * backend is the suspect, not the pack, and everything after this runs on
+   * the configuration that cannot hang.
+   */
+  s.retire = (err, silent) => {
+    if (pool[i] !== s) return;                  // already gone
     for (const waiting of s.pending.values()) waiting.reject(err);
     s.pending.clear();
-    // Retire this one and read on with the rest: a worker that dies partway
-    // through a pack should cost that pack, not the whole voice.
+    // A worker that dies partway through a pack should cost that pack, not
+    // the whole voice, so the rest of the pool reads on.
     pool[i] = null;
     s.worker.terminate?.();
+    if (silent) {
+      forceSafe = true;
+      chosen = null;
+      probing = null;
+      report({ status: "fellback", message: FELL_BACK });
+    }
     if (i === 0) ready = false;
     pump();
   };
+  s.worker.onerror = e =>
+    s.retire(new Error(e?.message || "The voice stopped unexpectedly."), false);
   pool[i] = s;
   return s;
 }
 
+/**
+ * How long to wait before deciding a backend is not going to answer.
+ *
+ * A thrown error we can catch; a backend that simply never returns we cannot.
+ * WebKit hands out a WebGPU adapter and then hangs inside inference -- no
+ * error, no audio, nothing to fall back from -- so the only signal is the
+ * clock. Generous enough that a slow CPU is never mistaken for a hang: the
+ * slowest measured configuration makes a second of speech in about a second,
+ * and a pack is at most a few dozen.
+ */
+export const deadlines = { speak: 90000, load: 180000, first: 30000 };
+
+
 function ask(s, message, transfer = []) {
   const id = ++seq;
+  // The first pack a worker makes is really a probe: a backend that works at
+  // all answers well inside `first`, and one that is going to hang costs the
+  // reader half a minute rather than a minute and a half.
+  const limit = message.type !== "speak" ? deadlines.load
+    : (s.spoke ? deadlines.speak : deadlines.first);
   return new Promise((resolve, reject) => {
-    s.pending.set(id, { resolve, reject });
+    const timer = setTimeout(() => {
+      if (!s.pending.has(id)) return;
+      s.pending.delete(id);
+      reject(new Error(`the voice stopped responding after ${Math.round(limit / 1000)}s`));
+      // Nothing can interrupt inference from out here, so the worker is gone
+      // as far as we are concerned: drop it and let the next request build a
+      // replacement that does not use the backend which hung.
+      s.retire(new Error("the voice stopped responding"), true);
+    }, limit);
+    s.pending.set(id, {
+      resolve: v => {
+        clearTimeout(timer);
+        // Only a pack proves the backend can speak. Counting the model load
+        // here would hand the very first pack the long deadline, which is
+        // exactly the one that needs the short one.
+        if (message.type === "speak") s.spoke = true;
+        resolve(v);
+      },
+      reject: e => { clearTimeout(timer); reject(e); },
+    });
     s.worker.postMessage({ ...message, id }, transfer);
   });
 }
@@ -207,7 +264,7 @@ async function grow(voice) {
       const i = live++;
       const s = slot(i);
       try {
-        await ask(s, { type: "load" });
+        await ask(s, { type: "load", force: forceSafe });
         s.loaded = true;
         await warm(s, voice);
       } catch {
@@ -321,7 +378,7 @@ export async function loadVoice(onProgress = () => {}, voice = DEFAULT_VOICE) {
     // the 326MB one. This is the first moment that choice is final.
     probing = null;
     const probe = resolveBudget();
-    loading = ask(slot(0), { type: "load" })
+    loading = ask(slot(0), { type: "load", force: forceSafe })
       .then(async done => { await probe; return done; })
       .finally(() => { loading = null; });
   }

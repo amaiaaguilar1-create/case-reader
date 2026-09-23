@@ -182,3 +182,31 @@ test("a guess never takes the last free worker", async () => {
   for (const w of FakeWorker.all) while (w.busy()) { w.reply(); await settle(); }
   await Promise.all(guesses);
 });
+
+/**
+ * A backend that answers nothing at all.
+ *
+ * WebKit hands out a WebGPU adapter and can then stall inside inference: no
+ * audio, no error, nothing to catch. The only signal is the clock, so the
+ * page gives up on the worker, throws it away, and builds the replacement on
+ * the configuration that cannot hang.
+ */
+test("a worker that stops answering is replaced by one that cannot hang", async () => {
+  tts.deadlines.first = 40;                       // real time; the wait is the point
+  const stuck = FakeWorker.last;
+  const failed = tts.synthesize("into the void", [], "af_heart", { tag: "a" })
+    .then(() => null, e => e);
+  await settle();
+  expect(stuck.spoken()).toEqual(["into the void"]);   // it was sent
+
+  const err = await failed;                       // ...and never answered
+  expect(err).toBeInstanceOf(Error);
+  expect(err.message).toMatch(/stopped responding/);
+
+  // The next attempt builds a new worker and tells it not to probe again.
+  tts.synthesize("second try", [], "af_heart", { tag: "a" }).catch(() => {});
+  await settle();
+  const replacement = FakeWorker.all.at(-1);
+  expect(replacement).not.toBe(stuck);
+  expect(replacement.asked.find(m => m.type === "load")?.force).toBe(true);
+});
