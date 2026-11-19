@@ -99,7 +99,8 @@ html[data-first="onboard"] #gate { display: none; }
 .choice[disabled] { opacity: .45; }
 .choice-t { display: block; font-weight: 600; font-size: 17px; }
 .choice-m { display: block; color: var(--muted); font-size: 14px; line-height: 1.35; margin-top: 3px; }
-.fine.soft { color: var(--muted); margin-top: 0; margin-bottom: 4px; font-size: 14px; }
+/* Specific enough to beat the error style below, which is also a .fine. */
+.onboard-card .fine.soft { color: var(--muted); margin-top: 0; margin-bottom: 4px; font-size: 14px; }
 .onboard-card .fine { margin-top: 16px; color: #c0392b; font-size: 15px; }
 
 /* The way in for someone without the password: a reviewer, say. */
