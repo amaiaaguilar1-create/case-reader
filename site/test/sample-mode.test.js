@@ -10,15 +10,20 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { buildDocument } from "../src/lib/chunker.js";
+import { buildDocument, tokenize } from "../src/lib/chunker.js";
 
 const HTML = readFileSync(resolve(process.cwd(), "index.html"), "utf8");
 const BODY = HTML.slice(HTML.indexOf("<body>") + 6, HTML.indexOf("</body>"))
   .replace(/<script[\s\S]*?<\/script>/g, "");
 
-// Sentences of forty characters or more, so the chunker keeps them apart.
+// A running head, then sentences of forty characters or more, so the chunker
+// keeps them apart.
 const SAMPLE = buildDocument("sample", "Should the bakery on the corner buy a second oven? "
   + "Rosa listened to the oven tick as it cooled, and thought about Saturday.");
+SAMPLE.sentences = [
+  { id: 0, text: "Hollis Street Bakery", words: tokenize("Hollis Street Bakery"), kind: "header" },
+  ...SAMPLE.sentences.map(s => ({ ...s, id: s.id + 1 })),
+];
 SAMPLE.pages = [];
 
 /** Library calls, by name. Sample mode must leave this empty. */
@@ -126,6 +131,8 @@ test("?sample opens the sample straight away, without the library", async () => 
   expect(fetched).toEqual([expect.stringMatching(/hollis-street-bakery.*\.pdf/)]);
   expect($("topTitle").textContent).toBe("Hollis Street Bakery (sample)");
   expect($("prose").textContent).toContain("second oven");
+  // It starts on the first sentence that is read, not the running head.
+  expect(document.querySelector(".sent.now").id).toBe("s1");
   // The library and the ways into it are out of sight.
   expect($("lib").hidden).toBe(true);
   expect($("lib").children).toHaveLength(0);
@@ -141,7 +148,7 @@ test("the sample plays, seeks, and still never touches the library", async () =>
   // The opening may be part of a sentence: it is sized to start quickly.
   expect(spoken[0]).toMatch(/^Should the bakery/);
   // Click-to-seek on a word of the second sentence.
-  document.querySelector('.w[data-s="1"]').click();
+  document.querySelector('.w[data-s="2"]').click();
   await settle();
   expect(spoken.some(t => t.startsWith("Rosa listened"))).toBe(true);
   // Speed and voice are the full app's controls.

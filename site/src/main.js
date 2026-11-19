@@ -938,7 +938,9 @@ async function openSample() {
   }
   doc.id = SAMPLE_ID;
   doc.title = "Hollis Street Bakery (sample)";
-  doc.position = 0;
+  // Start on the title, not on the running head above it: that is never read,
+  // and marking it as the place to begin is the wrong first impression.
+  doc.position = doc.sentences.find(s => s.kind === "body")?.id ?? 0;
   present(doc);
   prefetchOpening(doc.id);
   toast("Press play to listen. Tap any sentence to jump to it.");
