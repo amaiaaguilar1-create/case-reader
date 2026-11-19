@@ -28,9 +28,9 @@ describe("chunker", () => {
 
   it("packs a paragraph and stops at kind change", () => {
     expect(packForSpeech([
-      [5, "body", "The Group comprised over 30 companies located in eight countries."],
-      [6, "body", "Its flagship entity was a leader in hygienic paper products."],
-      [7, "header", "624-030"],
+      [5, "body", "The company ran 12 ferries between four islands and the mainland."],
+      [6, "body", "Its busiest route carried most of the summer day-trippers."],
+      [7, "header", "123-456"],
     ])).toEqual([5, 6]);
     expect(packForSpeech([
       [1, "body", "Hello there, this is a short line."],

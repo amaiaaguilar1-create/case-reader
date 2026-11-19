@@ -77,10 +77,10 @@ const WIDE = new Set([..."MWmw@%"]);
 const NARROW = new Set([..."ijltfIJ.,;:'\"`!|()[]{}-"]);
 
 const PAGE_LABEL_RE = /^(page\s*)?[\divxlc]+(\s*(of|\/)\s*\d+)?$/i;
-/** Publishers stamp a document number on the title page, e.g. "4-512-078". */
+/** Publishers stamp a document number on the title page, e.g. "1-234-567". */
 const CASE_ID_RE = /^\d-\d{3}-\d{3}$/;
 // Matched against the line with whitespace removed, so letter-spaced title
-// blocks ("4-512-078 R E V : ...") still register as the number line.
+// blocks ("1-234-567 R E V : ...") still register as the number line.
 const CASE_ID_PREFIX_RE = /^\d-\d{3}-\d{3}/;
 // Publisher boilerplate: the licensing and permissions block that repeats on
 // every page. It is furniture, not prose, so it is skipped rather than read

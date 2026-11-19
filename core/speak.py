@@ -15,7 +15,7 @@ _TEENS = ("ten eleven twelve thirteen fourteen fifteen sixteen "
 _TENS = ["", "", "twenty", "thirty", "forty", "fifty",
          "sixty", "seventy", "eighty", "ninety"]
 
-# Postal codes after a city: "Louisville, Ky.—" / "Boston, MA 02163".
+# Postal codes after a city: "Lexington, Ky.—" / "Portland, ME 04101".
 _STATES = {
     "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
     "CA": "California", "CO": "Colorado", "CT": "Connecticut",
@@ -64,7 +64,7 @@ _YEAR_RANGE_RE = re.compile(rf"\b({_YEAR})\s*[\-–—]\s*({_YEAR})\b")
 _DECADE_RE = re.compile(r"\b((?:1[1-9]|20)\d0)['’]?s\b")
 _YEAR_RE = re.compile(rf"(?<![\d.$/])({_YEAR})(?!\.?\d)")
 
-# Roman numerals after a name ("Owsley Brown II") vs after a common noun
+# Roman numerals after a name ("Arthur Penhallow II") vs after a common noun
 # ("World War II"). Kokoro otherwise says "roman two".
 def _to_roman(n: int) -> str:
     out: list[str] = []

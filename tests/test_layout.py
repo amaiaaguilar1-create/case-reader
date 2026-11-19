@@ -8,9 +8,9 @@ from core.layout import (BODY, BOILERPLATE, FOOTNOTE, FURNITURE, LayoutWord,
 fitz = pytest.importorskip("fitz")
 
 PAGE_W, PAGE_H = 612.0, 792.0
-BODY_TEXT = ("Robert took the helm of the family business in 2009. "
-             "The board met each quarter to review the succession plan. "
-             "Revenue grew steadily through the following decade. ")
+BODY_TEXT = ("Marta took over the island ferry company in 2009. "
+             "The board met each quarter to review the timetable for winter. "
+             "Ticket sales grew steadily through the following decade. ")
 
 
 @pytest.fixture(scope="module")
@@ -20,7 +20,7 @@ def sample_pdf(tmp_path_factory):
     doc = fitz.open()
     for n in range(3):
         page = doc.new_page(width=PAGE_W, height=PAGE_H)
-        page.insert_text((72, 40), "From Beirut With Love (A)", fontsize=9)
+        page.insert_text((72, 40), "The Lanternfish Ferry Company (A)", fontsize=9)
         page.insert_textbox(fitz.Rect(72, 110, 540, 400), BODY_TEXT * 3, fontsize=11)
         page.insert_text((72, 700), "1 A small note on the exhibit.", fontsize=7)
         page.insert_text((300, 760), str(n + 1), fontsize=9)
@@ -30,9 +30,9 @@ def sample_pdf(tmp_path_factory):
 
 
 @pytest.mark.parametrize("text, tracked", [
-    ("R E V : N O V E M B E R 1 , 2 0 1 8", True),
-    ("J U N E 2 2 , 2 0 2 4", True),
-    ("C H R I S T I N A R . W I N G", True),
+    ("R E V : M A R C H 3 , 2 0 2 0", True),
+    ("A P R I L 9 , 2 0 2 3", True),
+    ("M A R T A O . V E L L A", True),
     ("1 2 3 4 5", False),                       # exhibit row, not a heading
     ("A 1 2 3 4", False),                       # one stray letter isn't tracking
     ("2019 2020 2021 2022", False),
@@ -60,7 +60,7 @@ def _chars(text, superscript=""):
     ("1", "st", "1st"),
     ("22", "nd", "22nd"),
     ("Group", "", "Group"),                # nothing to strip
-    ("Nuqul", "b", "Nuqul"),
+    ("Penhallow", "b", "Penhallow"),
 ])
 def test_strip_superscripts(word, tail, expected):
     kept = _strip_superscripts(_chars(word, tail))
@@ -92,10 +92,10 @@ def test_classifies_page_furniture(sample_pdf):
     for w in layout.words:
         kinds.setdefault(w.kind, set()).add(w.text)
 
-    assert "Beirut" in kinds.get("header", set()), "running head not detected"
+    assert "Lanternfish" in kinds.get("header", set()), "running head not detected"
     assert "1" in kinds.get("footer", set()), "page number not detected"
     assert "exhibit." in kinds.get(FOOTNOTE, set()), "small low type not a footnote"
-    assert "succession" in kinds.get(BODY, set()), "prose must stay readable"
+    assert "timetable" in kinds.get(BODY, set()), "prose must stay readable"
 
 
 def test_boilerplate_beats_position(sample_pdf):
@@ -132,15 +132,15 @@ def test_small_type_is_a_note_anywhere_on_the_page(sample_pdf):
     page.insert_textbox(fitz.Rect(72, 90, 540, 300), BODY_TEXT * 2, fontsize=10)
     doc.new_page(width=PAGE_W, height=PAGE_H).insert_textbox(
         fitz.Rect(72, 60, 540, 300),
-        "Al Sayegh, Hadeel. Affirma Capital seeks to sell a stake. Reuters, 2021. ",
+        "Quill, Ada. Ferry line weighs a new route to the mainland. Tidewater Ledger, 2021. ",
         fontsize=8)
     doc.save(str(path))
     doc.close()
     kinds = {}
     for w in extract_layout(path).words:
         kinds.setdefault(w.kind, set()).add(w.text)
-    assert "Reuters," in kinds.get(FOOTNOTE, set()), "8pt citation should be a note"
-    assert "succession" in kinds.get(BODY, set()), "10pt narrative stays readable"
+    assert "Ledger," in kinds.get(FOOTNOTE, set()), "8pt citation should be a note"
+    assert "timetable" in kinds.get(BODY, set()), "10pt narrative stays readable"
 
 
 def test_furniture_never_merges_into_prose(sample_pdf):
@@ -149,9 +149,9 @@ def test_furniture_never_merges_into_prose(sample_pdf):
     for s in doc.sentences:
         assert s.kind in FURNITURE | {BODY}
     readable = " ".join(s.text for s in doc.sentences if s.kind == BODY)
-    assert "From Beirut With Love" not in readable
+    assert "The Lanternfish Ferry Company" not in readable
     assert "A small note" not in readable
-    assert "succession plan" in readable
+    assert "timetable for winter" in readable
 
 
 def _lw(text, *, y, block, line=0, page=0, x0=72.0, x1=540.0, h=12.0):
@@ -164,14 +164,14 @@ def test_wrapped_lines_join_even_across_pdf_blocks():
     """Print-to-PDF emits each visual line as its own block; that is not a paragraph."""
     words = [
         _lw("Each", y=100, block=0, x1=110),
-        _lw("summer", y=100, block=0, x1=160),
-        _lw("fortunes", y=100, block=0, x1=540),
-        _lw("gather", y=121, block=1, x1=130),
-        _lw("picnic.", y=121, block=1, x1=400),
+        _lw("spring", y=100, block=0, x1=160),
+        _lw("company", y=100, block=0, x1=540),
+        _lw("gathers", y=121, block=1, x1=130),
+        _lw("lunch.", y=121, block=1, x1=400),
     ]
     text = _run_text(words)
     assert "\n\n" not in text
-    assert "fortunes gather" in text
+    assert "company gathers" in text
 
 
 def test_paragraph_gap_still_splits():
@@ -188,10 +188,10 @@ def test_paragraph_gap_still_splits():
 def test_title_spacing_does_not_glue_the_next_paragraph():
     """A short title run has looser leading; that must not become the wrap rule."""
     words = [
-        _lw("Cousin", y=128, block=0, x1=540),
-        _lw("Scathing", y=162, block=1, x1=540),
+        _lw("Overview", y=128, block=0, x1=540),
+        _lw("Background", y=162, block=1, x1=540),
     ]
-    assert _run_text(words, leading=21.0) == "Cousin\n\nScathing"
+    assert _run_text(words, leading=21.0) == "Overview\n\nBackground"
 
 
 def test_wrapped_sentence_is_one_spoken_chunk(tmp_path):
@@ -199,20 +199,20 @@ def test_wrapped_sentence_is_one_spoken_chunk(tmp_path):
     path = tmp_path / "wrap.pdf"
     doc = fitz.open()
     page = doc.new_page(width=PAGE_W, height=PAGE_H)
-    # Separate insert_text calls become separate blocks, matching WSJ-style PDFs.
+    # Separate insert_text calls become separate blocks, matching print-to-PDF articles.
     page.insert_text((72, 120),
-                     "Each summer the heirs to one of America's biggest liquor fortunes")
+                     "Each spring the owners of the island's oldest ferry company")
     page.insert_text((72, 141),
-                     "gather in the heart of bourbon country for a family picnic.")
+                     "gather on the harbor wall for a long family lunch.")
     page.insert_text((72, 185),
                      "A later paragraph starts here after a real gap.")
     doc.save(str(path))
     doc.close()
     built = build_layout_document("wrap", extract_layout(path))
     body = [s.text for s in built.sentences if s.kind == BODY]
-    wrapped = [s for s in built.sentences if s.kind == BODY and "fortunes gather" in s.text]
+    wrapped = [s for s in built.sentences if s.kind == BODY and "company gather" in s.text]
     assert wrapped, f"line wrap split the sentence: {body}"
-    assert any(s.text.endswith("picnic.") for s in wrapped)
+    assert any(s.text.endswith("lunch.") for s in wrapped)
     assert any(s.text.startswith("A later paragraph") for s in built.sentences if s.kind == BODY)
     for s in wrapped:
         assert len(s.boxes) == len(s.words)

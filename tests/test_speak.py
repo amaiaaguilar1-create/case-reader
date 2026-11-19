@@ -4,9 +4,9 @@ from core.speak import speakable
 
 def test_year_is_read_as_a_year():
     assert speakable("founded in 1978.") == "founded in nineteen seventy eight."
-    assert speakable("In 1948 he fled.") == "In nineteen forty eight he fled."
+    assert speakable("In 1948 he sailed.") == "In nineteen forty eight he sailed."
     assert speakable("the 2008 crisis") == "the two thousand eight crisis"
-    assert speakable("In 2000, Jordan joined") == "In two thousand, Jordan joined"
+    assert speakable("In 2000, Marta joined") == "In two thousand, Marta joined"
     assert speakable("graduated in 2013") == "graduated in twenty thirteen"
     assert speakable("March 2023") == "March twenty twenty three"
 
@@ -23,25 +23,25 @@ def test_decade_and_range():
 def test_money_moves_dollars_after_the_scale():
     assert speakable("$1.3 billion") == "1.3 billion dollars"
     assert speakable("$1.3 Billion") == "1.3 billion dollars"
-    assert speakable("a $15 billion bid") == "a 15 billion dollars bid"
-    assert speakable("worth $11 billion.") == "worth 11 billion dollars."
+    assert speakable("a $12 billion offer") == "a 12 billion dollars offer"
+    assert speakable("worth $9 billion.") == "worth 9 billion dollars."
     assert speakable("$225 million") == "225 million dollars"
-    assert speakable("equivalent of $1.41.") == "equivalent of 1.41 dollars."
+    assert speakable("a fare of $1.41.") == "a fare of 1.41 dollars."
     assert speakable("it cost $1.") == "it cost 1 dollar."
 
 
 def test_dotted_acronyms_lose_the_pauses():
-    assert speakable("he got an M.B.A. to comply") == "he got an MBA to comply"
-    assert speakable("A.J.M. Wheatcroft") == "AJM Wheatcroft"
+    assert speakable("she got an M.B.A. to run it") == "she got an MBA to run it"
+    assert speakable("A.J.M. Pemberly") == "AJM Pemberly"
     assert "United States" in speakable("the U.S. state of Indiana")
     assert "United Kingdom" in speakable("college in the U.K. in 1980")
 
 
 def test_state_codes_after_a_city():
-    out = speakable("LOUISVILLE, Ky.—Each summer")
-    assert out.startswith("LOUISVILLE, Kentucky")
+    out = speakable("LEXINGTON, Ky.—Each spring")
+    assert out.startswith("LEXINGTON, Kentucky")
     assert "Ky" not in out
-    assert speakable("Boston, MA 02163") == "Boston, Massachusetts 02163"
+    assert speakable("Portland, ME 04101") == "Portland, Maine 04101"
     # ", In 1978" is a preposition, not Indiana.
     assert "Indiana" not in speakable("returned, In 1978, she left.")
 
@@ -53,22 +53,22 @@ def test_does_not_rewrite_non_years_or_display_noise():
 
 
 def test_punctuation_does_not_break_the_line():
-    out = speakable("Kentucky—Each summer")
+    out = speakable("Kentucky—Each spring")
     assert "—" not in out
     assert "Kentucky, Each" in out
-    assert speakable("Holding (FHH) was") == "Holding, FHH, was"
-    assert "…" not in speakable("independence… we’ll be better")
+    assert speakable("Ferries (LFC) was") == "Ferries, LFC, was"
+    assert "…" not in speakable("tomorrow… we’ll see")
 
 
 def test_roman_after_a_name_is_an_ordinal():
-    assert speakable("Owsley Brown II, his uncle") == (
-        "Owsley Brown the second, his uncle"
+    assert speakable("Arthur Penhallow II, his uncle") == (
+        "Arthur Penhallow the second, his uncle"
     )
-    assert speakable("Lyons Brown III and his brother") == (
-        "Lyons Brown the third and his brother"
+    assert speakable("Felix Penhallow III and his brother") == (
+        "Felix Penhallow the third and his brother"
     )
-    assert speakable("George Garvin Brown IV, a former chairman") == (
-        "George Garvin Brown the fourth, a former chairman"
+    assert speakable("Henry James Penhallow IV, a former chairman") == (
+        "Henry James Penhallow the fourth, a former chairman"
     )
     assert speakable("Queen Elizabeth II opened") == (
         "Queen Elizabeth the second opened"
@@ -83,5 +83,5 @@ def test_roman_after_a_common_noun_is_a_cardinal():
 
 
 def test_roman_does_not_eat_the_pronoun_I():
-    assert speakable("And I have experience.") == "And I have experience."
-    assert speakable("But I also need people") == "But I also need people"
+    assert speakable("And I have a plan.") == "And I have a plan."
+    assert speakable("But I also need help") == "But I also need help"
