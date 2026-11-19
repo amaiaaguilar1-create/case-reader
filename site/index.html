@@ -33,6 +33,10 @@
              placeholder="Password" aria-label="Password" spellcheck="false">
       <button class="btn" id="gateGo" type="submit">Open</button>
       <p class="fine" id="gateErr" hidden></p>
+      <div class="sample-offer">
+        <p><strong>No password?</strong> Try a two&#8209;page sample: a short, made&#8209;up case, read aloud with each word lit up as it&rsquo;s spoken. It reads the story and skips the page header, page numbers and footnotes. First you pick a voice to download, 92&nbsp;MB or 326&nbsp;MB. It runs in your browser, and nothing is uploaded.</p>
+        <button class="btn ghost" id="sampleTry" type="button">Try a sample</button>
+      </div>
     </form>
   </div>
 
@@ -88,7 +92,15 @@
       </div>
       <button class="btn add" id="addBtn" type="button">Add to library</button>
       <nav class="lib" id="lib" aria-label="Your library"></nav>
-      <p class="fine rail-note">Saved only on this device.</p>
+      <p class="fine rail-note" id="railNote">Saved only on this device.</p>
+      <div class="sample-rail" id="sampleRail" hidden>
+        <div class="lib-item on" aria-current="true">
+          <div class="t">Hollis Street Bakery</div>
+          <div class="m">Sample &middot; 2 pages</div>
+        </div>
+        <p class="fine rail-note">This is a sample. Your own library and uploads open with the password.</p>
+        <a class="text-btn" href="./">I have the password</a>
+      </div>
     </aside>
 
     <main>
@@ -101,8 +113,8 @@
           <div class="mark" aria-hidden="true">
             <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><path d="M4 10v4h4l6 5V5l-6 5H4zm14.5 2a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4z"/></svg>
           </div>
-          <h2>Your library is empty</h2>
-          <p>Add a PDF or paste text. Everything stays on this device.</p>
+          <h2 id="heroTitle">Your library is empty</h2>
+          <p id="heroText">Add a PDF or paste text. Everything stays on this device.</p>
           <button class="btn" id="heroAdd" type="button">Add something</button>
         </div>
         <article class="page" id="page" hidden>
