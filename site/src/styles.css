@@ -99,8 +99,16 @@ html[data-first="onboard"] #gate { display: none; }
 .choice[disabled] { opacity: .45; }
 .choice-t { display: block; font-weight: 600; font-size: 17px; }
 .choice-m { display: block; color: var(--muted); font-size: 14px; line-height: 1.35; margin-top: 3px; }
-.fine.soft { color: var(--muted); margin-top: 0; margin-bottom: 4px; font-size: 14px; }
+/* Specific enough to beat the error style below, which is also a .fine. */
+.onboard-card .fine.soft { color: var(--muted); margin-top: 0; margin-bottom: 4px; font-size: 14px; }
 .onboard-card .fine { margin-top: 16px; color: #c0392b; font-size: 15px; }
+
+/* The way in for someone without the password: a reviewer, say. */
+.sample-offer {
+  margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line);
+}
+.onboard-card .sample-offer p { font-size: 15px; margin-bottom: 16px; max-width: none; }
+.sample-offer strong { color: var(--ink); }
 
 .progress { margin-bottom: 24px; }
 .progress-track {
@@ -145,6 +153,11 @@ html[data-first="onboard"] #gate { display: none; }
 }
 .lib-item:hover .del { display: grid; }
 .rail-note { margin-top: 12px; font-size: 12px; color: var(--muted); }
+.sample-rail { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+.sample-rail .lib-item { cursor: default; }
+.sample-rail .lib-item:hover { background: var(--tint); }
+.sample-rail .text-btn { align-self: flex-start; padding-left: 0; text-decoration: none; }
+.sample-rail .text-btn:hover { color: var(--ink); }
 
 main { flex: 1; min-width: 0; display: flex; flex-direction: column; position: relative; }
 .top {

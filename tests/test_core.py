@@ -28,9 +28,9 @@ def test_short_sentences_merge():
 
 def test_pack_for_speech_keeps_a_paragraph_together():
     items = [
-        (5, "body", "The Group comprised over 30 companies located in eight countries."),
-        (6, "body", "Its flagship entity was a leader in hygienic paper products."),
-        (7, "header", "624-030"),
+        (5, "body", "The company ran 12 ferries between four islands and the mainland."),
+        (6, "body", "Its busiest route carried most of the summer day-trippers."),
+        (7, "header", "123-456"),
     ]
     packed = pack_for_speech(items)
     assert packed == [5, 6]

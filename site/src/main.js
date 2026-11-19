@@ -9,6 +9,8 @@ import {
 } from "./lib/tts.js";
 import { remember, unlocked, verify } from "./lib/gate.js";
 import { setVoicePreference, voicePreference } from "./lib/backend.js";
+// Written for the purpose; see scripts/make_sample_pdf.py.
+import sampleUrl from "./sample/hollis-street-bakery.pdf?url";
 import {
   clearWord, hasPages, mount as mountPages, mounted as pagesMounted,
   paintSentence, paintWord, unmount as unmountPages,
@@ -34,6 +36,9 @@ const PREF = {
 };
 
 const state = {
+  // True when the page was opened as the no-password sample. Nothing in that
+  // mode reads or writes the library.
+  sample: false,
   doc: null,
   view: PREF.view,
   sent: 0,
@@ -155,6 +160,8 @@ function awaiting(limit) {
 }
 
 async function importDoc(built) {
+  // The controls that lead here are hidden in sample mode; this is the lock.
+  if (state.sample) return;
   const saved = await saveDoc(built);
   await metaSet("onboarded", true);
   await refreshLibrary();
@@ -163,6 +170,7 @@ async function importDoc(built) {
 }
 
 async function refreshLibrary() {
+  if (state.sample) return;
   const docs = await listDocs();
   const lib = $("lib");
   lib.innerHTML = docs.length ? "" : '<p class="fine">Nothing here yet.</p>';
@@ -260,8 +268,16 @@ function clearView() {
 }
 
 async function openDoc(id) {
+  if (state.sample) return;
   const doc = await getDoc(id);
   if (!doc) return;
+  present(doc);
+  await refreshLibrary();
+  prefetchOpening(doc.id);
+}
+
+/** Make `doc` the one on screen, with nothing left over from the last. */
+function present(doc) {
   stop();
   state.doc = doc;
   state.sent = doc.position || 0;
@@ -270,8 +286,6 @@ async function openDoc(id) {
   state.durations.clear();
   renderDoc(doc);
   markSentence();
-  await refreshLibrary();
-  prefetchOpening(doc.id);
 }
 
 function locatePacked(idx) {
@@ -617,7 +631,7 @@ async function playSentence(sentId, continuing = false, fromWord = 0) {
   state.ahead.delete(state.nextAt);
   state.nextAt = chunk.to;
   setPlayIcon("pause");
-  savePosition(state.doc.id, state.sent).catch(() => {});
+  if (!state.sample) savePosition(state.doc.id, state.sent).catch(() => {});
   state.lastAhead = performance.now();
   runAhead(docId);
   highlightLoop();
@@ -752,7 +766,8 @@ async function saveVoice(choice) {
         : `Getting the voice ready… ${Math.round(p * 100)}%`;
     });
     await metaSet("voiceSaved", true);
-    showStep("add");
+    if (state.sample) openSample();
+    else showStep("add");
   } catch {
     err.textContent = "That didn’t finish. Check your Wi‑Fi and try again. It only happens once.";
     err.hidden = false;
@@ -861,6 +876,78 @@ async function boot() {
   }
 }
 
+/**
+ * Sample mode: the reader, working on a document written for the purpose, for
+ * someone who was not given the password -- a reviewer following a link, say.
+ *
+ * The password guards the reader's own library and uploads, so sample mode
+ * never goes near them. The sample is fetched with the page and parsed in
+ * memory, never saved; the library is not listed, and the controls that would
+ * add to it are hidden. What it does share with the full app is everything
+ * about listening: the voice download and its size choice, the voices, the
+ * speeds, the page view, the word highlight, and click-to-seek.
+ *
+ * `?sample` on the address opens it directly, so the link can be shared.
+ */
+const SAMPLE_ID = "sample";
+
+function wantsSample() {
+  try { return new URLSearchParams(location.search).has("sample"); }
+  catch { return false; }
+}
+
+async function enterSample() {
+  state.sample = true;
+  if (!wantsSample()) {
+    // So a reload, or the link copied out of the address bar, comes back here.
+    try { history.replaceState(null, "", `${location.pathname}?sample`); } catch { /* fine */ }
+  }
+  $("gate").hidden = true;
+  $("addBtn").hidden = true;
+  $("lib").hidden = true;
+  $("railNote").hidden = true;
+  $("sampleRail").hidden = false;
+  $("heroAdd").hidden = true;
+  $("heroTitle").textContent = "Opening the sample…";
+  $("heroText").textContent = "";
+  let saved = false;
+  try { saved = await metaGet("voiceSaved"); } catch { /* ask, then */ }
+  if (!saved) {
+    // Straight to the download choice: the lock screen already said what this
+    // is, and the size is still the visitor's call to make.
+    showOnboard();
+    showStep("voice");
+    return;
+  }
+  loadVoice().catch(() => {});
+  await openSample();
+}
+
+async function openSample() {
+  showApp();
+  let doc;
+  try {
+    const res = await fetch(sampleUrl);
+    if (!res.ok) throw new Error(`sample: ${res.status}`);
+    const file = new File([await res.blob()], "sample.pdf", { type: "application/pdf" });
+    doc = await parseFile(file);
+  } catch {
+    $("heroTitle").textContent = "The sample didn’t load";
+    $("heroText").textContent = "Check your connection and reload the page.";
+    return;
+  }
+  doc.id = SAMPLE_ID;
+  doc.title = "Hollis Street Bakery (sample)";
+  // Start on the title, not on the running head above it: that is never read,
+  // and marking it as the place to begin is the wrong first impression.
+  doc.position = doc.sentences.find(s => s.kind === "body")?.id ?? 0;
+  present(doc);
+  prefetchOpening(doc.id);
+  toast("Press play to listen. Tap any sentence to jump to it.");
+}
+
+$("sampleTry").onclick = () => enterSample();
+
 $("gateForm").onsubmit = async e => {
   e.preventDefault();
   const btn = $("gateGo"), err = $("gateErr"), field = $("gatePw");
@@ -893,7 +980,9 @@ $("gateForm").onsubmit = async e => {
 
 // The head script guessed which screen to show; from here [hidden] decides.
 delete document.documentElement.dataset.first;
-if (unlocked()) {
+if (wantsSample()) {
+  enterSample();
+} else if (unlocked()) {
   $("gate").hidden = true;
   $("onboard").hidden = false;
   boot();

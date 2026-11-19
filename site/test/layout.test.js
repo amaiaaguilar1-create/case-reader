@@ -9,9 +9,9 @@ import { makePdf, textWidth } from "./make-pdf.js";
 const PAGE_W = 612;
 const PAGE_H = 792;
 const BODY_LINES = [
-  "Robert took the helm of the family business in 2009. The board",
-  "met each quarter to review the succession plan. Revenue grew",
-  "steadily through the following decade, and the family held on.",
+  "Marta took over the island ferry company in 2009. The board",
+  "met each quarter to review the timetable for winter. Ticket",
+  "sales grew steadily through the decade, and the fleet with them.",
 ];
 
 /** Open a fixture with pdf.js the way a browser would, minus the worker. */
@@ -35,7 +35,7 @@ function samplePages() {
     width: PAGE_W,
     height: PAGE_H,
     runs: [
-      { text: "From Beirut With Love (A)", x: 72, y: 40, size: 9 },
+      { text: "The Lanternfish Ferry Company (A)", x: 72, y: 40, size: 9 },
       ...paragraph(110),
       { text: "1 A small note on the exhibit.", x: 72, y: 700, size: 7 },
       { text: String(n + 1), x: 300, y: 760, size: 9 },
@@ -52,9 +52,9 @@ function kindsOf(layout) {
 
 describe("tracked display type", () => {
   it.each([
-    ["R E V : N O V E M B E R 1 , 2 0 1 8", true],
-    ["J U N E 2 2 , 2 0 2 4", true],
-    ["C H R I S T I N A R . W I N G", true],
+    ["R E V : M A R C H 3 , 2 0 2 0", true],
+    ["A P R I L 9 , 2 0 2 3", true],
+    ["M A R T A O . V E L L A", true],
     ["1 2 3 4 5", false], // exhibit row, not a heading
     ["A 1 2 3 4", false], // one stray letter isn't tracking
     ["2019 2020 2021 2022", false],
@@ -85,7 +85,7 @@ describe("superscript markers", () => {
     ["1", "st", "1st"],
     ["22", "nd", "22nd"],
     ["Group", "", "Group"], // nothing to strip
-    ["Nuqul", "b", "Nuqul"],
+    ["Penhallow", "b", "Penhallow"],
   ])("%s + %s -> %s", (word, tail, expected) => {
     const kept = stripSuperscripts(items(word, tail));
     expect(kept.map(it => it.str).join("")).toBe(expected);
@@ -167,10 +167,10 @@ describe("page furniture", () => {
     expect(layout.pages[0]).toEqual({ width: PAGE_W, height: PAGE_H });
 
     const kinds = kindsOf(layout);
-    expect(kinds[HEADER]).toContain("Beirut");
+    expect(kinds[HEADER]).toContain("Lanternfish");
     expect(kinds[FOOTER]).toContain("1");
     expect(kinds[FOOTNOTE]).toContain("exhibit.");
-    expect(kinds[BODY]).toContain("succession");
+    expect(kinds[BODY]).toContain("timetable");
   });
 
   it("treats licensing text as furniture wherever it sits", async () => {
@@ -193,14 +193,14 @@ describe("page furniture", () => {
         width: PAGE_W,
         height: PAGE_H,
         runs: [{
-          text: "Al Sayegh, Hadeel. Affirma Capital seeks a stake. Reuters, 2021.",
+          text: "Quill, Ada. Ferry line weighs a new route. Tidewater Ledger, 2021.",
           x: 72, y: 60, size: 8,
         }],
       },
     ]);
     const kinds = kindsOf(layout);
-    expect(kinds[FOOTNOTE]).toContain("Reuters,");
-    expect(kinds[BODY]).toContain("succession");
+    expect(kinds[FOOTNOTE]).toContain("Ledger,");
+    expect(kinds[BODY]).toContain("timetable");
   });
 
   it("only ever emits the five kinds the reader knows", async () => {
@@ -212,9 +212,9 @@ describe("page furniture", () => {
   it("never merges furniture into prose", async () => {
     const doc = buildLayoutDocument("sample", await layoutOf(samplePages()));
     const readable = doc.sentences.filter(s => s.kind === BODY).map(s => s.text).join(" ");
-    expect(readable).not.toContain("From Beirut With Love");
+    expect(readable).not.toContain("The Lanternfish Ferry Company");
     expect(readable).not.toContain("A small note");
-    expect(readable).toContain("succession plan");
+    expect(readable).toContain("timetable for winter");
   });
 });
 
@@ -263,13 +263,13 @@ describe("paragraphs", () => {
   it("joins wrapped lines even when the PDF split them", () => {
     const text = runText([
       lw("Each", { y: 100, line: 0, x1: 110 }),
-      lw("summer", { y: 100, line: 0, x: 110, x1: 160 }),
-      lw("fortunes", { y: 100, line: 0, x: 160 }),
-      lw("gather", { y: 121, line: 1, x1: 130 }),
-      lw("picnic.", { y: 121, line: 1, x: 130, x1: 400 }),
+      lw("spring", { y: 100, line: 0, x: 110, x1: 160 }),
+      lw("company", { y: 100, line: 0, x: 160 }),
+      lw("gathers", { y: 121, line: 1, x1: 130 }),
+      lw("lunch.", { y: 121, line: 1, x: 130, x1: 400 }),
     ]);
     expect(text).not.toContain("\n\n");
-    expect(text).toContain("fortunes gather");
+    expect(text).toContain("company gathers");
   });
 
   it("still splits at a real paragraph gap", () => {
@@ -283,9 +283,9 @@ describe("paragraphs", () => {
 
   it("does not let a title's loose spacing glue on the next paragraph", () => {
     expect(runText([
-      lw("Cousin", { y: 128, line: 0 }),
-      lw("Scathing", { y: 162, line: 1 }),
-    ], 21)).toBe("Cousin\n\nScathing");
+      lw("Overview", { y: 128, line: 0 }),
+      lw("Background", { y: 162, line: 1 }),
+    ], 21)).toBe("Overview\n\nBackground");
   });
 
   it("keeps a sentence split across two lines in one spoken chunk", async () => {
@@ -293,14 +293,14 @@ describe("paragraphs", () => {
       width: PAGE_W,
       height: PAGE_H,
       runs: [
-        { text: "Each summer the heirs to one of America's biggest liquor", x: 72, y: 120, size: 10 },
-        { text: "fortunes gather in the heart of bourbon country for a picnic.", x: 72, y: 134, size: 10 },
+        { text: "Each spring the owners of the island's oldest ferry", x: 72, y: 120, size: 10 },
+        { text: "company gather on the harbor wall for a long lunch.", x: 72, y: 134, size: 10 },
         { text: "A later paragraph starts here after a real gap.", x: 72, y: 178, size: 10 },
       ],
     }]));
-    const wrapped = doc.sentences.filter(s => s.kind === BODY && s.text.includes("liquor fortunes"));
+    const wrapped = doc.sentences.filter(s => s.kind === BODY && s.text.includes("ferry company"));
     expect(wrapped.length).toBeGreaterThan(0);
-    expect(wrapped.some(s => s.text.endsWith("picnic."))).toBe(true);
+    expect(wrapped.some(s => s.text.endsWith("lunch."))).toBe(true);
     expect(doc.sentences.some(s => s.text.startsWith("A later paragraph"))).toBe(true);
     for (const s of wrapped) expect(s.words.every(w => w.box)).toBe(true);
   });
