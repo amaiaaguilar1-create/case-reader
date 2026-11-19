@@ -29,6 +29,12 @@ jobs:
           cache-dependency-path: site/package-lock.json
       - run: npm ci
         working-directory: site
+        env:
+          # onnxruntime-node (pulled in by kokoro-js, never used by the site,
+          # which runs onnxruntime-web in the browser) fetches its CUDA
+          # binaries from GitHub on Linux at install time. That download now
+          # 404s and fails the whole install.
+          ONNXRUNTIME_NODE_INSTALL_CUDA: skip
       - run: npm test
         working-directory: site
       - run: npm run build
