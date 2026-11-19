@@ -35,6 +35,45 @@ To try it on your computer before Pages is live:
     npm install
     npm run dev
 
+### Try it without the password (sample mode)
+
+For anyone who wants to see what it does but has no password, such as
+someone reviewing the project. Either press **Try a sample** on the lock
+screen, or send this link, which opens the sample directly:
+
+    https://amaiaaguilar1-create.github.io/case-reader/?sample
+
+It opens a two-page sample case and gives the full listening experience:
+
+- the same voice download, with the same choice between 326 MB and 92 MB;
+- the four voices and every speed from 0.75x to 3x;
+- the original page, with the sentence and the word being spoken lit up;
+- click any sentence, on the page or in the text view, to jump there.
+
+The sample is laid out like a real case so the layout-aware reading shows.
+It has a running head on both pages, page numbers, two footnotes, a source
+note and a small exhibit table. The voice reads the title and the story,
+and skips all of that, along with the raised footnote markers in the text.
+Its last footnote says so, on the page, while it is being skipped.
+
+What sample mode does not do: list, open, add to, or save anything in the
+library. The sample is fetched with the page and kept in memory only. The
+add buttons are hidden, and the rail says the library needs the password.
+On the device it saves only the voice and the download-size choice, which
+the full app would also use. Leaving is a link back to the lock screen.
+
+The sample is `site/src/sample/hollis-street-bakery.pdf`. Its text was
+written for this project; the bakery, its people and its numbers are
+invented. Never put case material in it: it is public. The PDF is generated
+and committed, so the site build does not need Python. To change the text,
+edit `scripts/make_sample_pdf.py` and run:
+
+    ./.venv/bin/python scripts/make_sample_pdf.py
+
+`site/test/sample.test.js` checks that the PDF still has each feature
+described above, and `site/test/sample-mode.test.js` checks that sample mode
+never touches the library.
+
 ### About the password
 
 `site/src/lib/gate.js` holds a PBKDF2-SHA-256 hash of the password and the
@@ -130,7 +169,8 @@ Things worth knowing:
 - server/     FastAPI app: SQLite library, imports, chunk synthesis with a
               background prefetch of the next spoken pack, audio serving.
 - site/       static Case Reader: in-browser Kokoro, IndexedDB library,
-              shared-password gate, three-screen onboarding. This is what
+              shared-password gate, three-screen onboarding, and a
+              no-password sample mode. This is what
               GitHub Pages serves. Synthesis runs in a worker; a service
               worker adds the COOP/COEP headers Pages cannot, so ONNX gets
               more than one core.
@@ -141,12 +181,18 @@ Things worth knowing:
 
 ## Engineering notes (findings from validated testing)
 
-- In the browser, synthesis is roughly real time: a pack takes about as long
-  to make as it takes to hear. That sets the pack size. The first pack is
-  small (150 chars) so speech starts in about ten seconds; the rest are 170,
-  because a pack much longer than the one playing cannot be ready before it
-  ends. Measured on a 12-core Mac: 480-char packs left a 13-second silence at
-  the first boundary, 260 left 5, and 170 reads for two minutes with none.
+- On the CPU, synthesis in the browser is roughly real time: a pack takes
+  about as long to make as it takes to hear. WebGPU is about ten times
+  faster. Pack size follows from that. Each pack is sized from the speech
+  already made and not yet heard, up to 260 characters. The first is a few
+  seconds of speech so the first word comes quickly, and later packs grow
+  as the queue fills. A sentence is only cut in two when the machine is too
+  slow to make it whole in time. A cut sounds like the end of a sentence,
+  because Kokoro gives the fragment a falling, finished cadence. The
+  ceiling used to be a flat 170, which cut long sentences on every machine.
+  Measured on a 12-core Mac with fixed sizes and no queue: 480-char packs
+  left a 13-second silence at the first boundary, 260 left 5, and 170 read
+  for two minutes with none. Sizing from the queue is what lets 260 work.
 - Cross-origin isolation is what makes that possible. Without it onnxruntime
   runs on one core and synthesis is ~2x slower than real time, so playback
   can never keep up. GitHub Pages sends no COOP/COEP headers, so
@@ -170,9 +216,16 @@ Things worth knowing:
 
 ## Tests
 
-    ./.venv/bin/pytest tests/ -q
-    cd site && npm test      # 20 tests: chunker, timing, parsers,
-                                      # postprocessing regressions
+    ./.venv/bin/pytest tests/ -q   # 60 tests: the Python app
+    cd site && npm test            # 107 tests: the website
+
+The Python tests cover chunking, word timing, the parsers, PDF layout
+(running heads, footnotes, wrapped lines), spoken forms of numbers and
+names, and the audio clean-up. The website tests cover the same chunking,
+layout and spoken forms, plus the voice backend choice, the synthesis
+queue, playback order, the page view, the password gate and sample mode.
+One gate test is skipped unless `READER_PASSPHRASE` is set (see above).
+GitHub Actions runs `npm test` before every deploy.
 
 ## Samples
 
